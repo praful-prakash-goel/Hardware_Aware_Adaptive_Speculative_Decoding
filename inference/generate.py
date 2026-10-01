@@ -79,7 +79,7 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
     elif model_name == 'pythia-160M':
         print(f">> Building {model_name} model...")
         model = AutoModelForCausalLM.from_pretrained('EleutherAI/pythia-160m').to(device)
-        model_tokenizer = AutoTokenizer.from_pretrained('EleutherAI/pythia-410m')
+        model_tokenizer = AutoTokenizer.from_pretrained('EleutherAI/pythia-160m')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
         
         return model, model_tokenizer
@@ -111,6 +111,13 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
         
         return model, model_tokenizer
+    elif model_name == 'SmolLM2-360M':
+            print(f">> Building {model_name} model...")
+            model = AutoModelForCausalLM.from_pretrained('HuggingFaceTB/SmolLM2-360M').to(device)
+            model_tokenizer = AutoTokenizer.from_pretrained('HuggingFaceTB/SmolLM2-1.7B')
+            model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+            
+            return model, model_tokenizer
     else:
         raise ValueError(f">> Unknown model name: {model_name}.")
 

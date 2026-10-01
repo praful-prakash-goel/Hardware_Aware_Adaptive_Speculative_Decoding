@@ -108,10 +108,10 @@ def generate_speculative_custom(main_model, draft_model, input_ids, tokenizer, m
     if return_stats:
         return input_ids, acceptance_rate, mean_accepted
     else:
-        return input_ids
+        return input_ids          
 
 @torch.no_grad()
-def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer, attention_mask, max_new_tokens=512, device=DEVICE, gamma=5, use_cache=False, return_stats=False):
+def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer, attention_mask, max_new_tokens=512, device=DEVICE, gamma=5, use_cache=False, return_stats=False, profiler=None):
     '''
     Speculative generation function which will utilize draft model to speculate gamma tokens, then verify it with main model in one pass
     
@@ -126,32 +126,52 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
         gamma: Number of tokens to speculate using draft model
         use_cache: Boolean variable to determine whether to use cache or not
         return_stats: Boolean variable to determine whether to return generation stats or not
+        profiler: Profiler for measuring time taken by each operation
     '''
     
     # If model is using cache, then reset cache before generation
-    past_key_values = DynamicCache() if use_cache else None
-    generated = []
+    draft_cache = DynamicCache() if use_cache else None
+    target_cache = DynamicCache() if use_cache else None
+    
+    # Target model initial prefill
+    target_out = main_model(input_ids, past_key_values=target_cache, use_cache=use_cache)
+    target_cache = target_out.past_key_values if use_cache else None
+    first_target_token = torch.argmax(target_out.logits[:, -1, :], dim=-1, keepdim=True)
     
     # Pass the input ids once to prefill the decoder cache
+    if profiler: profiler.start_stage("draft_speculation")
+    generated = []
     if use_cache:
         outputs = draft_model(input_ids, attention_mask=attention_mask, use_cache=True)
-        past_key_values = outputs.past_key_values
-        current_input = input_ids[:, -1:]
+        draft_cache = outputs.past_key_values
         
-        for _ in range(gamma):
+        logits = outputs.logits[:, -1, :]
+        next_token = torch.argmax(logits, dim=-1, keepdim=True)
+        generated.append(next_token)
+        current_input = next_token
+        current_attention_mask = attention_mask.clone()
+        
+        for _ in range(gamma-1):
+            current_attention_mask = torch.cat([
+                current_attention_mask,
+                torch.ones((input_ids.shape[0], 1), device=device)
+            ], dim=1)
+            position_ids = (current_attention_mask.cumsum(dim=-1) - 1)[:, -1:]
+            
             outputs = draft_model(
                 current_input,
-                past_key_values=past_key_values,
+                attention_mask=current_attention_mask,
+                position_ids=position_ids,
+                past_key_values=draft_cache,
                 use_cache=True
             )
             
-            past_key_values = outputs.past_key_values
+            draft_cache = outputs.past_key_values
             logits = outputs.logits[:, -1, :]
             next_token = torch.argmax(logits, dim=-1, keepdim=True)
             
-            if next_token is not None:
-                generated.append(next_token)
-                current_input = next_token
+            generated.append(next_token)
+            current_input = next_token
     else:
         current_input = input_ids
         
@@ -167,9 +187,12 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
             if next_token is not None:
                 generated.append(next_token)
                 current_input = torch.cat((current_input, next_token), dim=1)
+    if profiler: profiler.end_stage("draft_speculation")
     
     draft_tokens = torch.cat(generated, dim=1)
+    
     speculated_ids = torch.cat([input_ids, draft_tokens], dim=1)
+    past_correction_token = None
     
     tokens_generated = 0
     total_accepted_tokens = 0
@@ -177,23 +200,48 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
     total_steps = 0
     while tokens_generated < max_new_tokens:
         input_len = input_ids.shape[1]
+        actual_gamma = draft_tokens.shape[1]
         # Take the new tokens speculated by the draft model
         draft_tokens = speculated_ids[:, input_len:]
         
+        if profiler: profiler.start_stage("target_verification")
         # Pass the speculated ids to the main model for verification
-        outputs = main_model(speculated_ids, use_cache=False)
-        target_logits = outputs.logits
+        if use_cache:
+            if past_correction_token is None:
+                target_out = main_model(
+                    draft_tokens,
+                    past_key_values=target_cache,
+                    use_cache=True
+                )
+                target_cache = target_out.past_key_values
+                
+                target_preds = torch.cat([
+                    first_target_token,
+                    torch.argmax(target_out.logits[:, :-1, :], dim=-1)
+                ], dim=1)
+            else:
+                verification_chunk = torch.cat([past_correction_token, draft_tokens], dim=1)
+                target_out = main_model(
+                    verification_chunk,
+                    past_key_values=target_cache,
+                    use_cache=True
+                )
+                target_cache = target_out.past_key_values
+                
+                target_preds = torch.argmax(target_out.logits[:, :-1, :], dim=-1)
+        else:
+            target_out = main_model(speculated_ids, use_cache=False)
+            target_logits = target_out.logits
+            verification_logits = target_logits[:, input_len - 1 : input_len + actual_gamma - 1, :]
+            target_preds = torch.argmax(verification_logits, dim=-1)
+        if profiler: profiler.end_stage("target_verification")
         
-        actual_gamma = draft_tokens.shape[1]
-        # Shift indices by -1 to align the target model's output logits with the draft tokens they are predicting.
-        verification_logits = target_logits[:, input_len - 1 : input_len + actual_gamma - 1, :]
-        main_tokens = torch.argmax(verification_logits, dim=-1)
-        
+        if profiler: profiler.start_stage("comparison_logic")
         # Calculate the total number of accepted tokens
         accepted_tokens = 0
         for i in range(actual_gamma):
             draft_token = draft_tokens[0, i]
-            main_token = main_tokens[0, i]
+            main_token = target_preds[0, i]
             
             if draft_token == main_token:
                 accepted_tokens += 1
@@ -201,14 +249,30 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
                 break
         
         # Take the last correct token predicted by the main model
-        correction_token = torch.argmax(target_logits[:, input_len + accepted_tokens - 1, :], dim=-1)
+        if use_cache:
+            if past_correction_token is None:
+                if accepted_tokens == 0:
+                    correction_token = first_target_token
+                else:
+                    correction_token = torch.argmax(target_out.logits[:, accepted_tokens - 1, :], dim=-1, keepdim=True)
+            else:
+                # In verification_chunk: index 0 is correction, index 1..gamma are drafts
+                # Rejection at accepted_tokens means the correct replacement is at index accepted_tokens
+                correction_token = torch.argmax(target_out.logits[:, accepted_tokens, :], dim=-1, keepdim=True)
+        else:
+            correction_token = torch.argmax(target_logits[:, input_len + accepted_tokens - 1, :], dim=-1, keepdim=True)
+        correction_token = correction_token.view(input_ids.shape[0], 1)
+        if profiler: profiler.end_stage("comparison_logic")
+        
+        if profiler: profiler.start_stage("tensor_updates")
         # Valid draft is all the draft tokens which are accepted by the main model
         valid_draft = draft_tokens[:, :accepted_tokens]
-        
+
         # Concatenate the valid draft and correction token to get the new input ids
-        new_tokens = torch.cat([valid_draft, correction_token.unsqueeze(0)], dim=1)
+        new_tokens = torch.cat([valid_draft, correction_token], dim=1)
         input_ids = torch.cat([input_ids, new_tokens], dim=1)
         attention_mask = torch.ones_like(input_ids)
+        if profiler: profiler.end_stage("tensor_updates")
         
         # Increment the counters accordingly
         tokens_generated += (accepted_tokens + 1)
@@ -216,28 +280,82 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
         draft_generated_tokens += actual_gamma
         total_steps += 1
         
+        if tokens_generated >= max_new_tokens:
+            break
+        
         # If the draft model is using cache, rollback the KV Cache to the actual valid length and speculate the next chunk
         generated = []
         if use_cache:
-            valid_len = input_len + accepted_tokens
-            past_key_values.crop(valid_len)
+            if profiler: profiler.start_stage("draft_speculation")
+            # Rollback target cache
+            target_valid_len = input_len + accepted_tokens
             
-            current_input = correction_token.unsqueeze(0)
+            if accepted_tokens == actual_gamma:
+                # last drafted token was accepted but its KV was never computed — backfill it
+                last_draft_token = draft_tokens[:, -1:]
+                backfill_mask = torch.ones((input_ids.shape[0], target_valid_len), device=device)
+                backfill_pos = torch.tensor([[target_valid_len - 1]], device=device)
+                outputs = draft_model(
+                    last_draft_token,
+                    attention_mask=backfill_mask,
+                    position_ids=backfill_pos,
+                    past_key_values=draft_cache,
+                    use_cache=True,
+                )
+                draft_cache = outputs.past_key_values
+            if profiler: profiler.end_stage("draft_speculation")
             
-            for _ in range(gamma):
+            if profiler: profiler.start_stage("cache_rollback")
+            target_cache.crop(target_valid_len)
+            draft_cache.crop(target_valid_len)
+            if profiler: profiler.end_stage("cache_rollback")
+            
+            current_attention_mask = torch.ones((input_ids.shape[0], target_valid_len + 1), device=device)
+            position_ids = torch.tensor([[target_valid_len]], device=device)
+            
+            outputs = draft_model(
+                correction_token,
+                attention_mask=current_attention_mask,
+                position_ids=position_ids,
+                past_key_values=draft_cache,
+                use_cache=True
+            )
+            draft_cache = outputs.past_key_values
+            
+            current_input = torch.argmax(outputs.logits[:, -1:, :], dim=-1)
+            generated.append(current_input)
+            current_attention_mask = torch.ones(
+                (input_ids.shape[0], target_valid_len+1),
+                device=device
+            )
+            
+            if profiler: profiler.start_stage("draft_speculation")
+            for _ in range(gamma-1):
+                current_attention_mask = torch.cat([
+                    current_attention_mask,
+                    torch.ones((input_ids.shape[0], 1), device=device)
+                ], dim=1)
+                position_ids = (current_attention_mask.cumsum(dim=-1) - 1)[:, -1:]
+                
                 outputs = draft_model(
                     current_input,
-                    past_key_values=past_key_values,
+                    attention_mask=current_attention_mask,
+                    position_ids=position_ids,
+                    past_key_values=draft_cache,
                     use_cache=True
                 )
                 
-                past_key_values = outputs.past_key_values
+                draft_cache = outputs.past_key_values
                 logits = outputs.logits[:, -1, :]
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
                 
                 generated.append(next_token)
                 current_input = next_token
+            if profiler: profiler.end_stage("draft_speculation")
+            
+            past_correction_token = correction_token
         else:
+            if profiler: profiler.start_stage("draft_speculation")
             current_input = input_ids
             
             for _ in range(gamma):
@@ -251,6 +369,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
                 generated.append(next_token)
                 
                 current_input = torch.cat((current_input, next_token), dim=1)
+            if profiler: profiler.end_stage("draft_speculation")
                 
         # Generate the next speculated ids
         newly_generated_gamma = torch.cat(generated, dim=1)
@@ -261,11 +380,16 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
     # Mean accepted tokens is the average number of tokens accepted in each step
     mean_accepted = total_accepted_tokens / total_steps
     
+    if profiler:
+        breakdown, total_time = profiler.finalize()
+        return input_ids, acceptance_rate, mean_accepted, breakdown, total_time
+    
     if return_stats:
         return input_ids, acceptance_rate, mean_accepted
     else:
         return input_ids
             
+    
 if __name__ == '__main__':
     # CLI Arguments
     parser = argparse.ArgumentParser("Speculative Inference Engine")
