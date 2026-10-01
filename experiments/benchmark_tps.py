@@ -107,6 +107,10 @@ def calculate_tps(generate_func, max_new_tokens, use_cache, model_tokenizer, met
         
         timings.append(duration)
         tokens_generated.append(generated_tokens)
+        
+        del output, output_ids
+        if device == "cuda":
+            torch.cuda.empty_cache()
     
     # Calculate avg tps
     total_time = sum(timings)
@@ -126,17 +130,17 @@ def calculate_tps(generate_func, max_new_tokens, use_cache, model_tokenizer, met
 if __name__ == '__main__':
     print(f">> Benchmarking on: {DEVICE.upper()}\n")
     # CLI Arguments
-    parser = argparse.ArgumentParser("Evaluate alignment between draft model and main model")
+    parser = argparse.ArgumentParser("Benchmark tps of different configurations")
 
     parser.add_argument(
         "--model", type=str, default="custom",
-        choices=["Custom", "pythia", "SmolLM", "SmolLM2"], help="Model family to perform benchmark"
+        choices=["custom", "pythia", "SmolLM", "SmolLM2"], help="Model family to perform benchmark"
     )
     parser.add_argument(
         "--gamma", type=int, default=5, help="Number of draft tokens to speculate per step"
     )
     parser.add_argument(
-        "--max_new_tokens", type=int, default=512, help="Maximum number of tokens to generate"
+        "--max_new_tokens", type=int, default=256, help="Maximum number of tokens to generate"
     )
     args = parser.parse_args()
     
@@ -147,7 +151,7 @@ if __name__ == '__main__':
     print("----- Running the benchmarks -----\n")
     
     # Load the model
-    if model == "Custom":
+    if model == "custom":
         SAVE_PATH = os.path.join(RESULTS_DIR, "benchmarks.csv")
         STRESS_PATH = os.path.join(RESULTS_DIR, "stress_test.csv")
         
@@ -158,6 +162,7 @@ if __name__ == '__main__':
             "medium": get_model(model_name="draft_medium")
         }
         stress_draft_name = "Medium"
+        main_model_name = "Custom"
         
     elif model == "pythia":
         SAVE_PATH = os.path.join(RESULTS_DIR, "benchmarks_pythia.csv")
@@ -173,6 +178,7 @@ if __name__ == '__main__':
             "pythia-160M": (draft_model, draft_tokenizer)
         }
         stress_draft_name = "pythia-160M"
+        main_model_name = "pythia-1B"
     
     elif model == "SmolLM":
         SAVE_PATH = os.path.join(RESULTS_DIR, "benchmarks_smol.csv")
@@ -188,6 +194,7 @@ if __name__ == '__main__':
             "smollm-135M": (draft_model, draft_tokenizer)
         }
         stress_draft_name = "smollm-135M"
+        main_model_name = "smollm-1.7B"
         
     elif model == "SmolLM2":
         SAVE_PATH = os.path.join(RESULTS_DIR, "benchmarks_smol2.csv")
@@ -197,15 +204,16 @@ if __name__ == '__main__':
         main_model, main_tokenizer = get_model(model_name="SmolLM2-1.7B")
         fix_pad(main_model, main_tokenizer)
         
-        draft_model, draft_tokenizer = get_model(model_name="SmolLM2-135M")
+        draft_model, draft_tokenizer = get_model(model_name="SmolLM2-135")
         fix_pad(draft_model, draft_tokenizer)
         draft_models = {
             "smollm2-135M": (draft_model, draft_tokenizer)
         }
         stress_draft_name = "smollm2-135M"
+        main_model_name = "smollm2-1.7B"
         
     else:
-        print(f"\n>> Error: Unknown model setup. Supported models: custom, gpt2 and opt")
+        print(f"\n>> Error: Unknown model setup. Supported models: custom, pythia, SmolLM and SmolLM2")
         exit()
     
     # Callback to reset cache
@@ -221,8 +229,12 @@ if __name__ == '__main__':
                     block.sa_heads.reset_cache()
         
     def reset_both():
-        reset_draft()
-        reset_main()
+        if model == "custom":
+            reset_draft()
+            reset_main()
+        else:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     
     if main_model and all(draft_models.values()):
         results = []
@@ -239,12 +251,13 @@ if __name__ == '__main__':
         # Calculate avg tps for main model
         tps_main_without_cache, _, _ = calculate_tps(generate_func=main_model.generate, max_new_tokens=max_new_tokens, method_name="main without cache", use_cache=False, model_tokenizer=main_tokenizer)
         tps_main_with_cache, _, _ = calculate_tps(generate_func=main_model.generate, max_new_tokens=max_new_tokens, method_name="main with cache", use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_main)
-        print(f"{'Main':<15} {tps_main_without_cache:>12.2f} {tps_main_with_cache:>12.2f}")
+        print(f"{f'Main {main_model_name}':<15} {tps_main_without_cache:>12.2f} {tps_main_with_cache:>12.2f}")
+        time.sleep(10)
         
         # Store Main Results
         results.extend([
-            {"method": "Main", "draft": None, "gamma": None, "cache": False, "tps": tps_main_without_cache, "speedup": None, "acceptance": None, "mean_accepted": None},
-            {"method": "Main", "draft": None, "gamma": None, "cache": True, "tps": tps_main_with_cache, "speedup": None, "acceptance": None, "mean_accepted": None}
+            {"method": f"Main {main_model_name}", "draft": None, "gamma": None, "cache": False, "tps": tps_main_without_cache, "speedup": None, "acceptance": None, "mean_accepted": None},
+            {"method": f"Main {main_model_name}", "draft": None, "gamma": None, "cache": True, "tps": tps_main_with_cache, "speedup": None, "acceptance": None, "mean_accepted": None}
         ])
         
         for draft_name, draft_model in draft_models.items():
@@ -252,6 +265,7 @@ if __name__ == '__main__':
             tps_draft_without_cache, _, _ = calculate_tps(generate_func=draft_model[0].generate, max_new_tokens=max_new_tokens, method_name=f"draft {draft_name} without cache", use_cache=False, model_tokenizer=draft_model[1])
             tps_draft_with_cache, _, _ = calculate_tps(generate_func=draft_model[0].generate, max_new_tokens=max_new_tokens, method_name="draft small with cache", use_cache=True, model_tokenizer=draft_model[1], reset_callback=reset_draft)
             print(f"{f'Draft {draft_name}':<15} {tps_draft_without_cache:>12.2f} {tps_draft_with_cache:>12.2f}")
+            time.sleep(10)
             
             # Store Draft Results
             results.extend([
@@ -284,8 +298,9 @@ if __name__ == '__main__':
                     return_stats=True
                 )
             
-            tps_speculative_without_cache, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} without cache", use_cache=False, model_tokenizer=draft_model[1])
-            tps_speculative_with_cache, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} with cache", use_cache=True, model_tokenizer=draft_model[1], reset_callback=reset_both)
+            tps_speculative_without_cache, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} without cache", use_cache=False, model_tokenizer=main_tokenizer)
+            tps_speculative_with_cache, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} with cache", use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_both)
+            time.sleep(10)
             
             speedup_without_cache = tps_speculative_without_cache / tps_main_without_cache
             speedup_with_cache = tps_speculative_with_cache / tps_main_with_cache
@@ -323,8 +338,9 @@ if __name__ == '__main__':
                         return_stats=True
                     )
                 
-                tps_without, acceptance_without, mean_accepted_without = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} without cache", use_cache=False, model_tokenizer=draft_model[1])
-                tps_with, acceptance_with, mean_accepted_with = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} with cache", use_cache=True, model_tokenizer=draft_model[1], reset_callback=reset_both)
+                tps_without, acceptance_without, mean_accepted_without = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} without cache", use_cache=False, model_tokenizer=main_tokenizer)
+                tps_with, acceptance_with, mean_accepted_with = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} with cache", use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_both)
+                time.sleep(10)
                 
                 speedup_without = tps_without / tps_main_without_cache
                 speedup_with = tps_with / tps_main_with_cache
@@ -360,13 +376,14 @@ if __name__ == '__main__':
         stress_results = []
         stress_draft = draft_models[stress_draft_name][0]
         
-        for context_length in [16, 32, 64, 128, 256]:
+        for context_length in [32, 64, 128, 256, 512]:
             print(f">> Context Length: {context_length}")
             
             tps_main_cache, _, _ = calculate_tps(generate_func=main_model.generate, max_new_tokens=context_length, use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_main)
+            time.sleep(10)
             stress_results.append({
                 'context_length': context_length,
-                "configuration": "Main Baseline (With Cache)",
+                "configuration": f"Main {main_model_name} (With Cache)",
                 "tps": tps_main_cache
             })
             
@@ -388,6 +405,7 @@ if __name__ == '__main__':
                 )
             
             tps_speculative_without, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=context_length, use_cache=False, model_tokenizer=main_tokenizer)
+            time.sleep(10)
             stress_results.append({
                 "context_length": context_length,
                 "configuration": f"Speculative {stress_draft_name} (Without Cache)",
@@ -395,6 +413,7 @@ if __name__ == '__main__':
             })
             
             tps_speculative_with, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=context_length, use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_both)
+            time.sleep(10)
             stress_results.append({
                 "context_length": context_length,
                 "configuration": f"Speculative {stress_draft_name} (With Cache)",
