@@ -1,6 +1,6 @@
 ,method,draft,gamma,cache,tps,speedup,acceptance,mean_accepted
-0,Main,,,False,26.982753221570512,,,
-1,Main,,,True,45.10411806779082,,,
+0,Main Custom,,,False,26.982753221570512,,,
+1,Main Custom,,,True,45.10411806779082,,,
 2,Draft small,small,,False,216.51191206024055,,,
 3,Draft small,small,,True,260.5677011205649,,,
 4,Draft medium,medium,,False,70.58287827435562,,,
