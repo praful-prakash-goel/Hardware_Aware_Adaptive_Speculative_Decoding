@@ -1,4 +1,6 @@
 import os
+from typing import Optional
+
 import torch
 from model.model_architecture import build_model
 from model.config import MAIN_MODEL_CONFIG, DRAFT_MODEL_SMALL_CONFIG, DRAFT_MODEL_MEDIUM_CONFIG, ModelConfig
@@ -142,42 +144,48 @@ def reset_cache(model):
         for block in model.blocks:
             if hasattr(block, "sa_heads"):
                 block.sa_heads.reset_cache()
-        return None
+        return
 
     # huggingface model
-    return None
+    return
 
-def generate(prompt = None, model = None, tokenizer = None, device=DEVICE, max_new_tokens=512, use_cache=True):
-    '''
+def generate(model,
+             input_ids,
+             attention_mask,
+             tokenizer=None,
+             max_new_tokens=512,
+             use_cache=True,
+             temperature: float = 0.0,
+             do_sample: bool = False,
+             top_p: Optional[float] = None,
+             repetition_penalty: Optional[float] = None
+             ):
+    """
     Generate the output tokens based on the given prompt
-    
+
     Args:
-        prompt: Initial decoder tokens
         model: Model to use for generation of the tokens
-        device: Device to use for generation
+        input_ids: Input sequence of shape: (B, T)
+        attention_mask: Mask for specifying tokens to attend
+        tokenizer: Tokenizer to get token ids
         max_new_tokens: Maximum number of tokens to generate
         use_cache: Boolean variable to determine whether to use cache or not
-    '''
+        temperature: Sampling temperature (controls the creativity of the model)
+        do_sample: If True sample, else greedy argmax
+        top_p: If sampling and top_p provided, apply top_p (nucleus) sampling (controls the diversity of sampling)
+        repetition_penalty: If provided penalizes repeated tokens (> 1.0)
+    """
     
-    if model == None:
+    if model is None:
         print(f"No model found, either checkpoint doesn't exist or the model is not passed as the parameter.")
         sys.exit()
     
-    if tokenizer == None:
+    if tokenizer is None:
         print(f"Please provide an appropriate tokenizer for the model.")
         sys.exit()
     
     # If model is using cache, then reset cache before generation
-    _ = reset_cache(model)
-            
-    # Take prompt as input if not already provided
-    if prompt is None:
-        prompt = input("Please enter the prompt: ")
-    # Tokenize the prompt
-    inputs = tokenizer(prompt, return_tensors="pt")
-    
-    input_ids = inputs.input_ids.to(device)
-    attention_mask = inputs.attention_mask.to(device)
+    reset_cache(model)
     
     # Generate output for the given input ids
     model.eval()
@@ -185,18 +193,17 @@ def generate(prompt = None, model = None, tokenizer = None, device=DEVICE, max_n
         output = model.generate(
             input_ids=input_ids,
             max_new_tokens=max_new_tokens,
-            temperature=1.0,
-            do_sample=True,
-            top_p=0.9,
-            repetition_penalty=1.5,
+            temperature=temperature,
+            do_sample=do_sample,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
             use_cache=use_cache,
             pad_token_id=tokenizer.eos_token_id,
             attention_mask=attention_mask,
             eos_token_id=None
-        )[0].tolist()
-    text = tokenizer.decode(output, skip_special_tokens=True)
-    
-    print(f"\n>> Output: {text}")
+        )
+
+    return output
     
 if __name__ == '__main__':
     # CLI Arguments
@@ -212,12 +219,48 @@ if __name__ == '__main__':
     parser.add_argument(
         "--no_cache", action="store_true", help="Disable KV cache"
     )
+    parser.add_argument(
+        "--temperature", type=float, default=1.0, help="Sampling temperature"
+    )
+    parser.add_argument(
+        "--do_sample", action="store_true", help="Do sample"
+    )
+    parser.add_argument(
+        "--top_p", type=float, default=1.0, help="Top p probability"
+    )
+    parser.add_argument(
+        "--repetition_penalty", type=float, default=1.0, help="Repetition penalty"
+    )
     args = parser.parse_args()
     
     model_name = args.model
     max_new_tokens = args.max_new_tokens
     use_cache = not args.no_cache
+    temperature = args.temperature
+    do_sample = args.do_sample
+    top_p = args.top_p
+    repetition_penalty = args.repetition_penalty
     
     # Load the model and generate the output
     model, model_tokenizer = get_model(model_name=model_name)
-    generate(model=model, use_cache=use_cache, max_new_tokens=max_new_tokens, tokenizer=model_tokenizer)
+
+    prompt = input("Please enter the prompt: ")
+    inputs = model_tokenizer(prompt, return_tensors="pt")
+
+    input_ids = inputs.input_ids.to(DEVICE)
+    attention_mask = inputs.attention_mask.to(DEVICE)
+
+    output = generate(model=model,
+                      input_ids=input_ids,
+                      attention_mask=attention_mask,
+                      tokenizer=model_tokenizer,
+                      max_new_tokens=max_new_tokens,
+                      use_cache=use_cache,
+                      temperature=temperature,
+                      do_sample=do_sample,
+                      top_p=top_p,
+                      repetition_penalty=repetition_penalty
+                      )
+
+    text = model_tokenizer.decode(output[0].tolist(), skip_special_tokens=True)
+    print(f">> Output: {text}")
