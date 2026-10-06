@@ -1,28 +1,38 @@
+import time
+from gc import set_debug
+
 import torch
-from .generate import get_model, reset_cache
-from data.prepare_data import tokenizer
+from inference.generate import generate
+from inference.adaptive_controller import AdaptiveController
+from .generate import get_model
 from transformers import DynamicCache
-import os
 import argparse
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     
 @torch.no_grad()
-def generate_speculative_custom(main_model, draft_model, input_ids, tokenizer, max_new_tokens=512, device=DEVICE, gamma=5, use_cache=False, return_stats=False, **kwargs):
-    '''
+def generate_speculative_custom(main_model,
+                                draft_model,
+                                input_ids,
+                                max_new_tokens=512,
+                                device=DEVICE,
+                                gamma=5,
+                                use_cache=False,
+                                return_stats=False,
+                                **kwargs):
+    """
     Speculative generation function which will utilize draft model to speculate gamma tokens, then verify it with main model in one pass
     
     Args:
         main_model: The main model
         draft_model: The draft model
         input_ids: Input sequence of shape: (B, T)
-        tokenizer: Tokenizer to use for the input_ids
         max_new_tokens: Maximum number of tokens to generate
         device: Device to use for generation
         gamma: Number of tokens to speculate using draft model
         use_cache: Boolean variable to determine whether to use cache or not
         return_stats: Boolean variable to determine whether to return generation stats or not
-    '''
+    """
     
     # If model is using cache, then reset cache before generation
     if use_cache:
@@ -104,22 +114,36 @@ def generate_speculative_custom(main_model, draft_model, input_ids, tokenizer, m
     acceptance_rate = total_accepted_tokens / draft_generated_tokens
     # Mean accepted tokens is the average number of tokens accepted in each step
     mean_accepted = total_accepted_tokens / total_steps
-    
+
+    stats = {
+        "acceptance_rate": acceptance_rate,
+        "mean_accepted": mean_accepted
+    }
+
     if return_stats:
-        return input_ids, acceptance_rate, mean_accepted
+        return input_ids, stats
     else:
         return input_ids          
 
 @torch.no_grad()
-def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer, attention_mask, max_new_tokens=512, device=DEVICE, gamma=5, use_cache=False, return_stats=False, profiler=None):
-    '''
+def generate_speculative_standard(main_model,
+                                  draft_model,
+                                  input_ids,
+                                  attention_mask,
+                                  max_new_tokens=512,
+                                  device=DEVICE,
+                                  gamma=5,
+                                  use_cache=False,
+                                  return_stats=False,
+                                  profiler=None,
+                                  controller=None):
+    """
     Speculative generation function which will utilize draft model to speculate gamma tokens, then verify it with main model in one pass
-    
+
     Args:
         main_model: The main model
         draft_model: The draft model
         input_ids: Input sequence of shape: (B, T)
-        tokenizer: Tokenizer to use for the input_ids
         attention_mask: Mask for specifying tokens to attend
         max_new_tokens: Maximum number of tokens to generate
         device: Device to use for generation
@@ -127,21 +151,34 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
         use_cache: Boolean variable to determine whether to use cache or not
         return_stats: Boolean variable to determine whether to return generation stats or not
         profiler: Profiler for measuring time taken by each operation
-    '''
+        controller: Adaptive controller for speculative decoding
+    """
     
     # If model is using cache, then reset cache before generation
     draft_cache = DynamicCache() if use_cache else None
     target_cache = DynamicCache() if use_cache else None
-    
+
+    if controller is not None:
+        # Stats tracking
+        steps = 0
+        config_history = []
+        tps_history = []
+
+        current_gamma = controller.current_gamma
+        current_cache = controller.current_cache
+    else:
+        current_gamma = gamma
+        current_cache = use_cache
+
     # Target model initial prefill
-    target_out = main_model(input_ids, past_key_values=target_cache, use_cache=use_cache)
-    target_cache = target_out.past_key_values if use_cache else None
+    target_out = main_model(input_ids, past_key_values=target_cache, use_cache=current_cache)
+    target_cache = target_out.past_key_values if current_cache else None
     first_target_token = torch.argmax(target_out.logits[:, -1, :], dim=-1, keepdim=True)
     
     # Pass the input ids once to prefill the decoder cache
     if profiler: profiler.start_stage("draft_speculation")
     generated = []
-    if use_cache:
+    if current_cache:
         outputs = draft_model(input_ids, attention_mask=attention_mask, use_cache=True)
         draft_cache = outputs.past_key_values
         
@@ -151,7 +188,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
         current_input = next_token
         current_attention_mask = attention_mask.clone()
         
-        for _ in range(gamma-1):
+        for _ in range(current_gamma-1):
             current_attention_mask = torch.cat([
                 current_attention_mask,
                 torch.ones((input_ids.shape[0], 1), device=device)
@@ -175,7 +212,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
     else:
         current_input = input_ids
         
-        for _ in range(gamma):
+        for _ in range(current_gamma):
             outputs = draft_model(
                 current_input,
                 use_cache=False
@@ -199,14 +236,16 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
     draft_generated_tokens = 0
     total_steps = 0
     while tokens_generated < max_new_tokens:
+        chunk_start = time.time()
+
         input_len = input_ids.shape[1]
-        actual_gamma = draft_tokens.shape[1]
         # Take the new tokens speculated by the draft model
         draft_tokens = speculated_ids[:, input_len:]
-        
+        actual_gamma = draft_tokens.shape[1]
+
         if profiler: profiler.start_stage("target_verification")
         # Pass the speculated ids to the main model for verification
-        if use_cache:
+        if current_cache:
             if past_correction_token is None:
                 target_out = main_model(
                     draft_tokens,
@@ -249,7 +288,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
                 break
         
         # Take the last correct token predicted by the main model
-        if use_cache:
+        if current_cache:
             if past_correction_token is None:
                 if accepted_tokens == 0:
                     correction_token = first_target_token
@@ -275,7 +314,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
         if profiler: profiler.end_stage("tensor_updates")
         
         # Increment the counters accordingly
-        tokens_generated += (accepted_tokens + 1)
+        tokens_generated += accepted_tokens + 1
         total_accepted_tokens += accepted_tokens
         draft_generated_tokens += actual_gamma
         total_steps += 1
@@ -285,7 +324,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
         
         # If the draft model is using cache, rollback the KV Cache to the actual valid length and speculate the next chunk
         generated = []
-        if use_cache:
+        if current_cache:
             if profiler: profiler.start_stage("draft_speculation")
             # Rollback target cache
             target_valid_len = input_len + accepted_tokens
@@ -330,7 +369,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
             )
             
             if profiler: profiler.start_stage("draft_speculation")
-            for _ in range(gamma-1):
+            for _ in range(current_gamma-1):
                 current_attention_mask = torch.cat([
                     current_attention_mask,
                     torch.ones((input_ids.shape[0], 1), device=device)
@@ -358,7 +397,7 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
             if profiler: profiler.start_stage("draft_speculation")
             current_input = input_ids
             
-            for _ in range(gamma):
+            for _ in range(current_gamma):
                 outputs = draft_model(
                     current_input,
                     use_cache=False
@@ -373,8 +412,22 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
                 
         # Generate the next speculated ids
         newly_generated_gamma = torch.cat(generated, dim=1)
-        speculated_ids = torch.cat([input_ids, newly_generated_gamma], dim=1)        
-    
+        speculated_ids = torch.cat([input_ids, newly_generated_gamma], dim=1)
+
+        if controller is not None:
+            step_ms = (time.time() - chunk_start) * 1000
+            tokens_this_step = accepted_tokens + 1
+
+            steps += 1
+            config_history.append((current_gamma, current_cache))
+            tps_history.append(tokens_this_step / max(step_ms / 1000, 1e-9))
+
+            # Ask controller for next config
+            current_gamma, current_cache = controller.update(
+                tokens_generated=tokens_this_step,
+                step_time_ms=step_ms
+            )
+
     # Acceptance rate is the total number of tokens accepted divided by total number of tokens generated by the draft model
     acceptance_rate = total_accepted_tokens / draft_generated_tokens
     # Mean accepted tokens is the average number of tokens accepted in each step
@@ -383,9 +436,30 @@ def generate_speculative_standard(main_model, draft_model, input_ids, tokenizer,
     if profiler:
         breakdown, total_time = profiler.finalize()
         return input_ids, acceptance_rate, mean_accepted, breakdown, total_time
-    
+
     if return_stats:
-        return input_ids, acceptance_rate, mean_accepted
+        if controller is not None:
+            from collections import Counter
+            total_tps = sum(tps_history) / len(tps_history) if tps_history else 0.0
+            stats = {
+                "mode": "Adaptive",
+                "tokens_generated": tokens_generated,
+                "steps": steps,
+                "config_counts": dict(Counter(config_history)),
+                "fallen_back": controller.fallen_back,
+                "baseline_tps": controller.baseline_tps,
+                "total_tps": total_tps,
+                "final_gamma": current_gamma,
+                "final_cache": current_cache
+            }
+        else:
+            stats = {
+                "mode": "Speculative",
+                "acceptance_rate": acceptance_rate,
+                "mean_accepted": mean_accepted
+            }
+        return input_ids, stats
+
     else:
         return input_ids
             
@@ -414,6 +488,9 @@ if __name__ == '__main__':
     parser.add_argument(
         "--return_stats", action="store_true", help="Return metrics"
     )
+    parser.add_argument(
+        "--adaptive", action="store_true", help="Use adaptive model"
+    )
     args = parser.parse_args()
     
     main_model_name = args.main_model
@@ -422,39 +499,89 @@ if __name__ == '__main__':
     max_new_tokens = args.max_new_tokens
     use_cache = not args.no_cache
     return_stats = args.return_stats
-    
+    use_adaptive = args.adaptive
+
     # Load both models
     print(">> Loading Main Model...")
-    main_model, model_tokenizer = get_model(model_name=main_model_name)
+    main_model, main_tokenizer = get_model(model_name=main_model_name)
     print("\n>> Loading Draft Model...")
-    draft_model, _ = get_model(model_name=draft_model_name)
-    
+    draft_model, draft_tokenizer = get_model(model_name=draft_model_name)
+
     if main_model and draft_model:
+        main_model.generation_config.pad_token_id = main_tokenizer.pad_token_id
+        draft_model.generation_config.pad_token_id = draft_tokenizer.pad_token_id
+
         # Put both models in eval model
         main_model.eval()
         draft_model.eval()
         
         # Take the prompt as input and tokenize it
         prompt = input("\nPlease enter the prompt: ")
-        
-        inputs = model_tokenizer(prompt, return_tensors="pt")
+
+
+        inputs = main_tokenizer(prompt, return_tensors="pt")
         input_ids = inputs.input_ids.to(DEVICE)
         attention_mask = inputs.attention_mask.to(DEVICE)
-        
-        if return_stats:
-            if main_model_name == 'main' and draft_model_name in ['draft_small', 'draft_medium']:
-                output_ids, acceptance_rate, mean_accepted = generate_speculative_custom(main_model, draft_model, input_ids, model_tokenizer, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats)
-            else:
-                output_ids, acceptance_rate, mean_accepted = generate_speculative_standard(main_model, draft_model, input_ids, model_tokenizer, attention_mask, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats)
+
+        if use_adaptive:
+            init_start = time.time()
+            print(f">> [speculative_engine] Using adaptive controller\n")
+            controller = AdaptiveController(
+                alpha=0.2,
+                eval_every=10,
+                re_explore_every=None
+            )
+
+            sd_viable = controller.initialize(
+                main_model=main_model,
+                draft_model=draft_model,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                device=DEVICE,
+                use_cache=use_cache
+            )
+            init_time = time.time() - init_start
+        else:
+            print(f">> [speculative_engine] Using vanilla speculative decoding\n")
+            controller = None
+            sd_viable = True
+
+        gen_start = time.time()
+        if not sd_viable:
+            print("[speculative_engine] SD not viable -> Using AR Baseline]")
+            output_ids = generate(
+                main_model,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                tokenizer=main_tokenizer,
+                max_new_tokens=max_new_tokens,
+                use_cache=use_cache
+            )
+
+            if return_stats:
+                stats = {"mode": "Autoregressive", "reason": "ratio < 1.0"}
 
         else:
-            if main_model_name == 'main' and draft_model_name in ['draft_small', 'draft_medium']:
-                output_ids = generate_speculative_custom(main_model, draft_model, input_ids, model_tokenizer, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats)
+            if return_stats:
+                if main_model_name == 'main' and draft_model_name in ['draft_small', 'draft_medium']:
+                    output_ids, stats = generate_speculative_custom(main_model, draft_model, input_ids, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats)
+                else:
+                    output_ids, stats = generate_speculative_standard(main_model, draft_model, input_ids, attention_mask, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats, controller=controller)
+
             else:
-                output_ids = generate_speculative_standard(main_model, draft_model, input_ids, model_tokenizer, attention_mask, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats)
-                
-        text = model_tokenizer.decode(output_ids[0].tolist(), skip_special_tokens=True)
+                if main_model_name == 'main' and draft_model_name in ['draft_small', 'draft_medium']:
+                    output_ids = generate_speculative_custom(main_model, draft_model, input_ids, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats)
+                else:
+                    output_ids = generate_speculative_standard(main_model, draft_model, input_ids, attention_mask, max_new_tokens=max_new_tokens, gamma=gamma, use_cache=use_cache, return_stats=return_stats, controller=controller)
+
+        gen_time = time.time() - gen_start
+
+        text = main_tokenizer.decode(output_ids[0].tolist(), skip_special_tokens=True)
         print(f"\n>> Output: {text}")
+
         if return_stats:
-            print(f"\n>> Acceptance rate: {acceptance_rate*100}%")
-            print(f">> Mean Accepted tokens: {mean_accepted}")
+            print(f">> Stats: {stats}")
+
+        print(f"\n>> Generation Time : {gen_time}")
+        if controller:
+            print(f">> Controller Initialization Time : {init_time}")
