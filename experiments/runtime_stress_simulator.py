@@ -125,7 +125,8 @@ class RuntimeStressSimulator:
             torch.cuda.set_device(self.device)
 
             # Get memory AFTER the model has already been loaded.
-            free_mem, total_mem = torch.cuda.mem_get_info(self.device)
+            device_index = self.device.index if self.device.index is not None else 0
+            free_mem, total_mem = torch.cuda.mem_get_info(device_index)
 
             bytes_per_element = torch.tensor(
                 [],
@@ -159,9 +160,7 @@ class RuntimeStressSimulator:
                     f"Stress matrix too small: {side}"
                 )
 
-            self._stream = torch.cuda.Stream(
-                device=self.device
-            )
+            self._stream = torch.cuda.Stream(device=device_index)
 
             # Allocate on the dedicated stress stream.
             with torch.cuda.stream(self._stream):
