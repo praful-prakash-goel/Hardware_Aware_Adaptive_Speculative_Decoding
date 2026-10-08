@@ -16,13 +16,19 @@ class RuntimeStressSimulator:
     """
 
     def __init__(
-        self,
-        device="cuda",
-        memory_fraction=0.30,
-        dtype=torch.float16,
-        max_side=32768,
+            self,
+            device="cuda",
+            memory_fraction=0.30,
+            dtype=torch.float16,
+            max_side=32768,
     ):
-        self.device = torch.device(device)
+        if isinstance(device, str):
+            device = torch.device(device)
+
+        if device.type == "cuda" and device.index is None:
+            device = torch.device(f"cuda:{torch.cuda.current_device()}")
+
+        self.device = device
         self.memory_fraction = memory_fraction
         self.dtype = dtype
         self.max_side = max_side
@@ -74,6 +80,10 @@ class RuntimeStressSimulator:
 
             while self._stress_tensor is None and self._running:
                 time.sleep(0.01)
+
+            if self._stress_tensor is None:
+                print("[Simulator] Failed to start GPU stress")
+                return
 
             print("[Simulator] Background GPU stress STARTED")
         else:
