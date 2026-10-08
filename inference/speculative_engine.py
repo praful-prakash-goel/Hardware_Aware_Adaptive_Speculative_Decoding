@@ -136,7 +136,8 @@ def generate_speculative_standard(main_model,
                                   use_cache=False,
                                   return_stats=False,
                                   profiler=None,
-                                  controller=None):
+                                  controller=None,
+                                  step_callback=None):
     """
     Speculative generation function which will utilize draft model to speculate gamma tokens, then verify it with main model in one pass
 
@@ -152,6 +153,8 @@ def generate_speculative_standard(main_model,
         return_stats: Boolean variable to determine whether to return generation stats or not
         profiler: Profiler for measuring time taken by each operation
         controller: Adaptive controller for speculative decoding
+        step_callback: Optional callback called at the start of each step with tokens_generated;
+                       may return a phase label for per-phase timing.
     """
     
     # If model is using cache, then reset cache before generation
@@ -235,7 +238,9 @@ def generate_speculative_standard(main_model,
     total_accepted_tokens = 0
     draft_generated_tokens = 0
     total_steps = 0
+    phase_stats = {}
     while tokens_generated < max_new_tokens:
+        phase = step_callback(tokens_generated) if step_callback is not None else None
         chunk_start = time.time()
 
         input_len = input_ids.shape[1]
@@ -320,6 +325,12 @@ def generate_speculative_standard(main_model,
         total_steps += 1
         
         if tokens_generated >= max_new_tokens:
+            step_ms = (time.time() - chunk_start) * 1000
+            tokens_this_step = accepted_tokens + 1
+            if phase is not None:
+                entry = phase_stats.setdefault(phase, {"tokens": 0, "time_ms": 0.0})
+                entry["tokens"] += tokens_this_step
+                entry["time_ms"] += step_ms
             break
         
         # If the draft model is using cache, rollback the KV Cache to the actual valid length and speculate the next chunk
@@ -414,10 +425,15 @@ def generate_speculative_standard(main_model,
         newly_generated_gamma = torch.cat(generated, dim=1)
         speculated_ids = torch.cat([input_ids, newly_generated_gamma], dim=1)
 
-        if controller is not None:
-            step_ms = (time.time() - chunk_start) * 1000
-            tokens_this_step = accepted_tokens + 1
+        step_ms = (time.time() - chunk_start) * 1000
+        tokens_this_step = accepted_tokens + 1
 
+        if phase is not None:
+            entry = phase_stats.setdefault(phase, {"tokens": 0, "time_ms": 0.0})
+            entry["tokens"] += tokens_this_step
+            entry["time_ms"] += step_ms
+
+        if controller is not None:
             steps += 1
             config_history.append((current_gamma, current_cache))
             tps_history.append(tokens_this_step / max(step_ms / 1000, 1e-9))
@@ -450,13 +466,25 @@ def generate_speculative_standard(main_model,
                 "baseline_tps": controller.baseline_tps,
                 "total_tps": total_tps,
                 "final_gamma": current_gamma,
-                "final_cache": current_cache
+                "final_cache": current_cache,
+                "acceptance_rate": acceptance_rate,
+                "mean_accepted": mean_accepted,
+                "phase_tps": {
+                    phase: data["tokens"] / max(data["time_ms"] / 1000.0, 1e-9)
+                    for phase, data in phase_stats.items()
+                },
+                "phase_tokens": {phase: data["tokens"] for phase, data in phase_stats.items()}
             }
         else:
             stats = {
                 "mode": "Speculative",
                 "acceptance_rate": acceptance_rate,
-                "mean_accepted": mean_accepted
+                "mean_accepted": mean_accepted,
+                "phase_tps": {
+                    phase: data["tokens"] / max(data["time_ms"] / 1000.0, 1e-9)
+                    for phase, data in phase_stats.items()
+                },
+                "phase_tokens": {phase: data["tokens"] for phase, data in phase_stats.items()}
             }
         return input_ids, stats
 
