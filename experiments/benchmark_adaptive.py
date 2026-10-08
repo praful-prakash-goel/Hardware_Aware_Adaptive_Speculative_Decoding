@@ -23,7 +23,7 @@ PROMPTS = [
     "The history of the Roman Empire is vast and"
 ]
 
-CONTEXT_LENGTHS = [128, 256, 512, 1024, 2048]
+CONTEXT_LENGTHS = [32, 64, 128, 256, 512, 1024, 2048]
 
 PHASES = [
     ("No Load (0-30%)", 0.00, 0.30, False),
