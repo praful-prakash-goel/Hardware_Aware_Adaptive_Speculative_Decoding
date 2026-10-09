@@ -240,17 +240,8 @@ def calculate_tps(generate_func,
     # Calculate avg tps
     total_time = sum(timings)
     total_tokens = sum(tokens_generated)
-
-    # calculate avg acceptance and mean accepted for speculative engine
-    avg_tps = total_tokens / total_time if total_time > 0 else 0.0
-    if any(a is not None for a in acceptance_list):
-        avg_acceptance = sum(acceptance_list) / len(acceptance_list)
-        avg_mean_accepted = sum(mean_accepted_list) / len(mean_accepted_list)
-    else:
-        avg_acceptance = None
-        avg_mean_accepted = None
     
-    return avg_tps, avg_acceptance, avg_mean_accepted
+    return avg_tps, total_time, total_tokens
 
 # Callback to reset cache
 def reset_main():
@@ -459,8 +450,8 @@ if __name__ == '__main__':
         #                 return_stats=True
         #             )
         #
-        #         tps_without, acceptance_without, mean_accepted_without = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} without cache", use_cache=False, model_tokenizer=main_tokenizer)
-        #         tps_with, acceptance_with, mean_accepted_with = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} with cache", use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_both)
+        #         tps_without, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} without cache", use_cache=False, model_tokenizer=main_tokenizer)
+        #         tps_with, _, _ = calculate_tps(generate_func=generate_func, max_new_tokens=max_new_tokens, method_name=f"speculative {draft_name} with cache", use_cache=True, model_tokenizer=main_tokenizer, reset_callback=reset_both)
         #         time.sleep(10)
         #
         #         speedup_without = tps_without / tps_main_without_cache
@@ -473,9 +464,7 @@ if __name__ == '__main__':
         #             "gamma": gamma,
         #             "cache": False,
         #             "tps": tps_without,
-        #             "speedup": speedup_without,
-        #             "acceptance": acceptance_without,
-        #             "mean_accepted": mean_accepted_without
+        #             "speedup": speedup_without
         #         })
         #
         #         results.append({
@@ -484,9 +473,7 @@ if __name__ == '__main__':
         #             "gamma": gamma,
         #             "cache": True,
         #             "tps": tps_with,
-        #             "speedup": speedup_with,
-        #             "acceptance": acceptance_with,
-        #             "mean_accepted": mean_accepted_with
+        #             "speedup": speedup_with
         #         })
         #
         # df = pd.DataFrame(results)
