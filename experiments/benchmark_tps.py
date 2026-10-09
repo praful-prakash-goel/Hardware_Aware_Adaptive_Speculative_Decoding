@@ -240,6 +240,9 @@ def calculate_tps(generate_func,
     # Calculate avg tps
     total_time = sum(timings)
     total_tokens = sum(tokens_generated)
+
+    # calculate avg tps
+    avg_tps = total_tokens / total_time if total_time > 0 else 0.0
     
     return avg_tps, total_time, total_tokens
 
