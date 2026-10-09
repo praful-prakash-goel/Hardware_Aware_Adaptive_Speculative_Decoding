@@ -265,7 +265,7 @@ def run_dynamic_sd(main_model, draft_model, model_tokenizer,
                     main_model=main_model,
                     draft_model=draft_model,
                     input_ids=input_ids,
-                    attention_mask=attention_mask,
+                    attention_mask=attn_mask,
                     device=DEVICE,
                     use_cache=True
                 )
