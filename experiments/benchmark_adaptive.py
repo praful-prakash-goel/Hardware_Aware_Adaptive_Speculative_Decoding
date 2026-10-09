@@ -240,84 +240,137 @@ def run_dynamic_sd(main_model, draft_model, model_tokenizer,
     total_phase_tokens = empty_phase_dict(0)
     total_phase_time = empty_phase_dict()
 
-    generate_func = partial(
-        generate_speculative_standard,
-        main_model,
-        draft_model,
-        gamma=gamma,
-        use_cache=True
-    )
-
     simulator.prepare()
     simulator.set_active(False)
 
     for prompt_idx, prompt in enumerate(PROMPTS, 1):
         simulator.set_active(False)
+
         inputs = model_tokenizer(prompt, return_tensors="pt")
         input_ids = inputs.input_ids.to(DEVICE)
-        attention_mask = inputs.attention_mask.to(DEVICE)
+        attn_mask = inputs.attention_mask.to(DEVICE)
         reset_both()
 
         active_controller = None
+        sd_viable = True
+
         if adaptive:
             active_controller = AdaptiveController(
                 alpha=0.2,
                 eval_every=10,
                 re_explore_every=None
             )
-            active_controller.initialize(
-                main_model=main_model,
-                draft_model=draft_model,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                device=DEVICE,
-                use_cache=True
-            )
+            with torch.no_grad():
+                sd_viable = active_controller.initialize(
+                    main_model=main_model,
+                    draft_model=draft_model,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    device=DEVICE,
+                    use_cache=True
+                )
+
+        phase_state = {
+            "current": PHASES[0][0],
+            "step_start": None,
+            "phase_time": empty_phase_dict(0.0),
+            "phase_tokens": empty_phase_dict(0),
+            "last_tokens": 0,
+        }
 
         def step_callback(tokens_generated):
+            now   = time.perf_counter()
             phase, load = phase_for_tokens(tokens_generated, context_length)
-            simulator.set_active(load)
-            return phase
+
+            # Accumulate time spent in previous phase since last callback
+            if phase_state["step_start"] is not None:
+                phase_state["phase_time"][phase_state["current"]] += (
+                    now - phase_state["step_start"]
+                )
+
+            # Accumulate tokens produced since last callback
+            delta = tokens_generated - phase_state["last_tokens"]
+            phase_state["phase_tokens"][phase_state["current"]] += delta
+            phase_state["last_tokens"] = tokens_generated
+
+            # Switch phase and toggle simulator if boundary crossed
+            if phase != phase_state["current"]:
+                phase_state["current"] = phase
+                simulator.set_active(load)
+
+            phase_state["step_start"] = now
 
         if DEVICE == "cuda":
             torch.cuda.synchronize()
-        start = time.perf_counter()
+        gen_start = time.perf_counter()
+        phase_state["step_start"] = gen_start
 
         with torch.no_grad():
-            output_ids, stats = generate_func(
-                input_ids,
-                max_new_tokens=context_length,
-                use_cache=True,
-                attention_mask=attention_mask,
-                controller=active_controller,
-                step_callback=step_callback,
-                return_stats=True
-            )
+            if not sd_viable:
+                # Controller decided SD not viable — same as calculate_tps
+                # fallback: use plain AR generation
+                output_ids = main_model.generate(
+                    input_ids,
+                    attention_mask=attn_mask,
+                    max_new_tokens=context_length,
+                    use_cache=True
+                )
+            elif adaptive:
+                # Adaptive SD — controller decides gamma per step
+                output_ids, stats = generate_speculative_standard(
+                    main_model,
+                    draft_model,
+                    input_ids,
+                    attention_mask=attn_mask,
+                    max_new_tokens=context_length,
+                    use_cache=True,
+                    controller=active_controller,
+                    step_callback=step_callback,
+                    return_stats=True
+                )
+            else:
+                # Vanilla SD — fixed gamma, no controller
+                output_ids, stats = generate_speculative_standard(
+                    main_model,
+                    draft_model,
+                    input_ids,
+                    attention_mask=attn_mask,
+                    max_new_tokens=context_length,
+                    use_cache=True,
+                    gamma=gamma,
+                    step_callback=step_callback,
+                    return_stats=True
+                )
 
         if DEVICE == "cuda":
             torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start
+        gen_end = time.perf_counter()
+
+        final_elapsed = gen_end - phase_state["step_start"]
+        phase_state["phase_time"][phase_state["current"]] += final_elapsed
 
         generated = output_ids.shape[1] - input_ids.shape[1]
+        remaining_tokens = generated - phase_state["last_tokens"]
+        phase_state["phase_tokens"][phase_state["current"]] += remaining_tokens
+
         total_tokens += generated
-        total_time += elapsed
+        total_time += gen_end - gen_start
 
         for phase in total_phase_tokens:
-            total_phase_tokens[phase] += stats.get("phase_tokens", {}).get(phase, 0)
-            phase_tps = stats.get("phase_tps", {}).get(phase, 0.0)
-            if phase_tps > 0:
-                phase_tokens = stats.get("phase_tokens", {}).get(phase, 0)
-                total_phase_time[phase] += phase_tokens / phase_tps
+            total_phase_tokens[phase] += phase_state["phase_tokens"][phase]
+            total_phase_time[phase] += phase_state["phase_time"][phase]
 
-        print(f"    {'Adaptive' if adaptive else 'Vanilla'} Prompt {prompt_idx}: "
-              f"{generated} tokens, {elapsed:.2f}s")
+        print(f"    {'Adaptive' if adaptive else 'Vanilla'} "
+              f"Prompt {prompt_idx}: {generated} tokens, "
+              f"{gen_end - gen_start:.2f}s")
 
     simulator.set_active(False)
     simulator.stop()
 
     overall_tps = total_tokens / max(total_time, 1e-9)
     phase_tps = {
-        phase: total_phase_tokens[phase] / max(total_phase_time[phase], 1e-9)
+        phase: (total_phase_tokens[phase] /
+                max(total_phase_time[phase], 1e-9))
         if total_phase_tokens[phase] > 0 else 0.0
         for phase in total_phase_tokens
     }
