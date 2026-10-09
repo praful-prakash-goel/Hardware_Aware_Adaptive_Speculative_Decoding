@@ -420,131 +420,148 @@ if __name__ == '__main__':
     results_overall = []
     results_loadwise = []
 
-    for context_length in CONTEXT_LENGTHS:
-        print(f"\n{'='*60}")
-        print(f">> Context length: {context_length} tokens")
-        print(f"{'='*60}")
+    print("Testing stress effect...")
 
-        print("\n[Condition 1] No background load")
+    # Without stress
+    tps_clean = run_ar_baseline(main_model, model_tokenizer, 256)
+    print(f"AR TPS without stress: {tps_clean:.2f}")
 
-        ar_tps = run_ar_baseline(main_model, model_tokenizer, context_length)
-        print(f"  AR Baseline:           {ar_tps:.2f} TPS")
-        time.sleep(5)
+    # With stress
+    simulator = RuntimeStressSimulator(device=DEVICE, memory_fraction=0.4)
+    simulator.start()
+    time.sleep(1)
+    tps_stressed = run_ar_baseline(main_model, model_tokenizer, 256)
+    print(f"AR TPS with stress: {tps_stressed:.2f}")
+    simulator.stop()
 
-        vanilla_tps = run_vanilla_sd(
-            main_model, draft_model, model_tokenizer,
-            context_length, gamma=5
-        )
-        print(f"  Vanilla SD (γ=5):      {vanilla_tps:.2f} TPS")
-        time.sleep(5)
+    slowdown = (tps_clean - tps_stressed) / tps_clean * 100
+    print(f"Slowdown: {slowdown:.1f}%")
 
-        adaptive_tps = run_adaptive(
-            main_model, draft_model, model_tokenizer, context_length
-        )
-        print(f"  Adaptive Controller:   {adaptive_tps:.2f} TPS")
-        time.sleep(5)
-
-        results_overall.append({
-            "context_length": context_length,
-            "condition": "No Load",
-            "stress_fraction": 0.0,
-            "AR Baseline": ar_tps,
-            "Vanilla SD (γ=5)": vanilla_tps,
-            "Adaptive Controller": adaptive_tps,
-        })
-
-        print(f"\n[Condition 2] Runtime-changing GPU load (stress={stress_frac:.0%})")
-
-        # AR baseline under changing runtime conditions.
-        dynamic_ar_tps, ar_phase_tps, ar_phase_tokens, ar_phase_time = run_dynamic_ar(
-            main_model, model_tokenizer, context_length, simulator=RuntimeStressSimulator(
-                device=DEVICE, memory_fraction=stress_frac
-            )
-        )
-        print(f"  AR Baseline:           {dynamic_ar_tps:.2f} TPS")
-        for phase, tps in ar_phase_tps.items():
-            print(f"    {phase}: {tps:.2f} TPS")
-        time.sleep(5)
-
-        # Vanilla SD under the exact same changing runtime schedule.
-        dynamic_vanilla_tps, vanilla_phase_tps, vanilla_phase_tokens, vanilla_phase_time = run_dynamic_sd(
-            main_model, draft_model, model_tokenizer, context_length,
-            simulator=RuntimeStressSimulator(device=DEVICE, memory_fraction=stress_frac),
-            adaptive=False,
-            gamma=5
-        )
-        print(f"  Vanilla SD (γ=5):      {dynamic_vanilla_tps:.2f} TPS")
-        for phase, tps in vanilla_phase_tps.items():
-            print(f"    {phase}: {tps:.2f} TPS")
-        time.sleep(5)
-
-        # Adaptive controller under the exact same changing runtime schedule.
-        dynamic_adaptive_tps, adaptive_phase_tps, adaptive_phase_tokens, adaptive_phase_time = run_dynamic_sd(
-            main_model, draft_model, model_tokenizer, context_length,
-            simulator=RuntimeStressSimulator(device=DEVICE, memory_fraction=stress_frac),
-            adaptive=True
-        )
-        print(f"  Adaptive Controller:   {dynamic_adaptive_tps:.2f} TPS")
-        for phase, tps in adaptive_phase_tps.items():
-            print(f"    {phase}: {tps:.2f} TPS")
-        time.sleep(5)
-
-        # Overall CSV: ONLY overall TPS. No phase-level columns here.
-        results_overall.append({
-            "context_length": context_length,
-            "condition": "Runtime Changing Load",
-            "stress_fraction": stress_frac,
-            "AR Baseline": dynamic_ar_tps,
-            "Vanilla SD (γ=5)": dynamic_vanilla_tps,
-            "Adaptive Controller": dynamic_adaptive_tps,
-        })
-
-        # Load-wise CSV: one row per method x phase.
-        method_phase_data = [
-            ("AR Baseline", ar_phase_tps, ar_phase_tokens, ar_phase_time),
-            ("Vanilla SD (γ=5)", vanilla_phase_tps, vanilla_phase_tokens, vanilla_phase_time),
-            ("Adaptive Controller", adaptive_phase_tps, adaptive_phase_tokens, adaptive_phase_time),
-        ]
-
-        for method, phase_tps_dict, phase_tokens_dict, phase_time_dict in method_phase_data:
-            for name, start_pct, end_pct, load in PHASES:
-                results_loadwise.append({
-                    "context_length": context_length,
-                    "stress_fraction": stress_frac,
-                    "method": method,
-                    "phase": name,
-                    "load_active": load,
-                    "phase_start_pct": start_pct * 100,
-                    "phase_end_pct": end_pct * 100,
-                    "tokens": phase_tokens_dict[name],
-                    "time_s": phase_time_dict[name],
-                    "TPS": phase_tps_dict[name],
-                })
-
-        # Save after every context length in case of crash.
-        overall_df = pd.DataFrame(results_overall)
-        loadwise_df = pd.DataFrame(results_loadwise)
-        overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
-        loadwise_df.to_csv(LOADWISE_SAVE_PATH, index=False)
-
-        print(f"\n>> Overall results saved so far to {OVERALL_SAVE_PATH}")
-        print(f">> Load-wise results saved so far to {LOADWISE_SAVE_PATH}")
-
-    # Final save.
-    overall_df = pd.DataFrame(results_overall)
-    loadwise_df = pd.DataFrame(results_loadwise)
-    overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
-    loadwise_df.to_csv(LOADWISE_SAVE_PATH, index=False)
-
-    print(f"\n>> Final overall results saved to {OVERALL_SAVE_PATH}")
-    print(f">> Final load-wise results saved to {LOADWISE_SAVE_PATH}")
-
-    print(f"\n{'='*60}")
-    print("SUMMARY — OVERALL TPS")
-    print(f"{'='*60}")
-    print(overall_df.to_string(index=False))
-
-    print(f"\n{'='*60}")
-    print("SUMMARY — LOAD-WISE TPS")
-    print(f"{'='*60}")
-    print(loadwise_df.to_string(index=False))
+    # for context_length in CONTEXT_LENGTHS:
+    #     print(f"\n{'='*60}")
+    #     print(f">> Context length: {context_length} tokens")
+    #     print(f"{'='*60}")
+    #
+    #     print("\n[Condition 1] No background load")
+    #
+    #     ar_tps = run_ar_baseline(main_model, model_tokenizer, context_length)
+    #     print(f"  AR Baseline:           {ar_tps:.2f} TPS")
+    #     time.sleep(5)
+    #
+    #     vanilla_tps = run_vanilla_sd(
+    #         main_model, draft_model, model_tokenizer,
+    #         context_length, gamma=5
+    #     )
+    #     print(f"  Vanilla SD (γ=5):      {vanilla_tps:.2f} TPS")
+    #     time.sleep(5)
+    #
+    #     adaptive_tps = run_adaptive(
+    #         main_model, draft_model, model_tokenizer, context_length
+    #     )
+    #     print(f"  Adaptive Controller:   {adaptive_tps:.2f} TPS")
+    #     time.sleep(5)
+    #
+    #     results_overall.append({
+    #         "context_length": context_length,
+    #         "condition": "No Load",
+    #         "stress_fraction": 0.0,
+    #         "AR Baseline": ar_tps,
+    #         "Vanilla SD (γ=5)": vanilla_tps,
+    #         "Adaptive Controller": adaptive_tps,
+    #     })
+    #
+    #     print(f"\n[Condition 2] Runtime-changing GPU load (stress={stress_frac:.0%})")
+    #
+    #     # AR baseline under changing runtime conditions.
+    #     dynamic_ar_tps, ar_phase_tps, ar_phase_tokens, ar_phase_time = run_dynamic_ar(
+    #         main_model, model_tokenizer, context_length, simulator=RuntimeStressSimulator(
+    #             device=DEVICE, memory_fraction=stress_frac
+    #         )
+    #     )
+    #     print(f"  AR Baseline:           {dynamic_ar_tps:.2f} TPS")
+    #     for phase, tps in ar_phase_tps.items():
+    #         print(f"    {phase}: {tps:.2f} TPS")
+    #     time.sleep(5)
+    #
+    #     # Vanilla SD under the exact same changing runtime schedule.
+    #     dynamic_vanilla_tps, vanilla_phase_tps, vanilla_phase_tokens, vanilla_phase_time = run_dynamic_sd(
+    #         main_model, draft_model, model_tokenizer, context_length,
+    #         simulator=RuntimeStressSimulator(device=DEVICE, memory_fraction=stress_frac),
+    #         adaptive=False,
+    #         gamma=5
+    #     )
+    #     print(f"  Vanilla SD (γ=5):      {dynamic_vanilla_tps:.2f} TPS")
+    #     for phase, tps in vanilla_phase_tps.items():
+    #         print(f"    {phase}: {tps:.2f} TPS")
+    #     time.sleep(5)
+    #
+    #     # Adaptive controller under the exact same changing runtime schedule.
+    #     dynamic_adaptive_tps, adaptive_phase_tps, adaptive_phase_tokens, adaptive_phase_time = run_dynamic_sd(
+    #         main_model, draft_model, model_tokenizer, context_length,
+    #         simulator=RuntimeStressSimulator(device=DEVICE, memory_fraction=stress_frac),
+    #         adaptive=True
+    #     )
+    #     print(f"  Adaptive Controller:   {dynamic_adaptive_tps:.2f} TPS")
+    #     for phase, tps in adaptive_phase_tps.items():
+    #         print(f"    {phase}: {tps:.2f} TPS")
+    #     time.sleep(5)
+    #
+    #     # Overall CSV: ONLY overall TPS. No phase-level columns here.
+    #     results_overall.append({
+    #         "context_length": context_length,
+    #         "condition": "Runtime Changing Load",
+    #         "stress_fraction": stress_frac,
+    #         "AR Baseline": dynamic_ar_tps,
+    #         "Vanilla SD (γ=5)": dynamic_vanilla_tps,
+    #         "Adaptive Controller": dynamic_adaptive_tps,
+    #     })
+    #
+    #     # Load-wise CSV: one row per method x phase.
+    #     method_phase_data = [
+    #         ("AR Baseline", ar_phase_tps, ar_phase_tokens, ar_phase_time),
+    #         ("Vanilla SD (γ=5)", vanilla_phase_tps, vanilla_phase_tokens, vanilla_phase_time),
+    #         ("Adaptive Controller", adaptive_phase_tps, adaptive_phase_tokens, adaptive_phase_time),
+    #     ]
+    #
+    #     for method, phase_tps_dict, phase_tokens_dict, phase_time_dict in method_phase_data:
+    #         for name, start_pct, end_pct, load in PHASES:
+    #             results_loadwise.append({
+    #                 "context_length": context_length,
+    #                 "stress_fraction": stress_frac,
+    #                 "method": method,
+    #                 "phase": name,
+    #                 "load_active": load,
+    #                 "phase_start_pct": start_pct * 100,
+    #                 "phase_end_pct": end_pct * 100,
+    #                 "tokens": phase_tokens_dict[name],
+    #                 "time_s": phase_time_dict[name],
+    #                 "TPS": phase_tps_dict[name],
+    #             })
+    #
+    #     # Save after every context length in case of crash.
+    #     overall_df = pd.DataFrame(results_overall)
+    #     loadwise_df = pd.DataFrame(results_loadwise)
+    #     overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
+    #     loadwise_df.to_csv(LOADWISE_SAVE_PATH, index=False)
+    #
+    #     print(f"\n>> Overall results saved so far to {OVERALL_SAVE_PATH}")
+    #     print(f">> Load-wise results saved so far to {LOADWISE_SAVE_PATH}")
+    #
+    # # Final save.
+    # overall_df = pd.DataFrame(results_overall)
+    # loadwise_df = pd.DataFrame(results_loadwise)
+    # overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
+    # loadwise_df.to_csv(LOADWISE_SAVE_PATH, index=False)
+    #
+    # print(f"\n>> Final overall results saved to {OVERALL_SAVE_PATH}")
+    # print(f">> Final load-wise results saved to {LOADWISE_SAVE_PATH}")
+    #
+    # print(f"\n{'='*60}")
+    # print("SUMMARY — OVERALL TPS")
+    # print(f"{'='*60}")
+    # print(overall_df.to_string(index=False))
+    #
+    # print(f"\n{'='*60}")
+    # print("SUMMARY — LOAD-WISE TPS")
+    # print(f"{'='*60}")
+    # print(loadwise_df.to_string(index=False))
