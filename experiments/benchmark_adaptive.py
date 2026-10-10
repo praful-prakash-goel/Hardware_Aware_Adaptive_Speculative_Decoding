@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 import time
 from functools import partial
 
@@ -45,6 +46,17 @@ PROMPTS = [
 ]
 
 CONTEXT_LENGTHS = [64, 128, 256, 512, 1024]
+GAMMAS = [2, 3, 5, 7, 10]
+CSV_COLUMNS = (
+    ['run_id', 'generation_length',
+     'AR TPS', 'AR Tokens', 'AR Time']
+    + [
+        f"Vanilla SD (γ={gamma}) {metric}"
+        for gamma in GAMMAS
+        for metric in ['TPS', 'Tokens', 'Time']
+    ]
+    + ['Adaptive TPS', 'Adaptive Tokens', 'Adaptive Time']
+)
 
 def reset_both():
     if torch.cuda.is_available():
@@ -430,57 +442,98 @@ if __name__ == '__main__':
     main_model.eval()
     draft_model.eval()
 
-    results_overall = []
+    # results_overall = []
     # results_loadwise = []
+
+    if os.path.exists(OVERALL_SAVE_PATH):
+        existing_df = pd.read_csv(OVERALL_SAVE_PATH)
+        run_id = int(existing_df['run_id'].max()) + 1
+    else:
+        run_id = 1
+
+    print(f">> Starting benchmark run: {run_id}")
+
+    rng = random.Random(run_id)
 
     for context_length in CONTEXT_LENGTHS:
         print(f"\n{'='*60}")
         print(f">> Context length: {context_length} tokens")
         print(f"{'='*60}")
 
-        ar_tps, ar_time, ar_tokens = run_ar_baseline(main_model, model_tokenizer, context_length)
-        print(
-            f"  AR Baseline:           {ar_tps:.2f} TPS | "
-            f"{ar_time:.2f} s | {ar_tokens} tokens"
-        )
-        time.sleep(5)
+        methods = [
+            ("ar", None),
+            *[("vanilla", gamma) for gamma in GAMMAS],
+            ("adaptive", None),
+        ]
+        rng.shuffle(methods)
 
-        gamma_results = {}
-        for gamma in [2, 3, 5, 7, 10]:
-            vanilla_tps, vanilla_time, vanilla_tokens = run_vanilla_sd(
-                main_model, draft_model, model_tokenizer,
-                context_length, gamma=gamma
-            )
+        print(f">> Execution order: {methods}")
 
-            gamma_results[f"Vanilla SD (γ={gamma}) TPS"] = vanilla_tps
-            gamma_results[f"Vanilla SD (γ={gamma}) Time"] = vanilla_time
-            gamma_results[f"Vanilla SD (γ={gamma}) Tokens"] = vanilla_tokens
+        row = {
+            "run_id": run_id,
+            "generation_length": context_length,
+        }
 
-            print(
-                f"  Vanilla SD (γ={gamma}): {vanilla_tps:.2f} TPS | "
-                f"{vanilla_time:.2f} s | {vanilla_tokens} tokens"
-            )
+        for method, gamma in methods:
+
+            if method == "ar":
+                ar_tps, ar_time, ar_tokens = run_ar_baseline(main_model, model_tokenizer, context_length)
+
+                row.update({
+                    "AR TPS": ar_tps,
+                    "AR Tokens": ar_tokens,
+                    "AR Time": ar_time,
+                })
+
+                print(
+                    f"  AR Baseline:           {ar_tps:.2f} TPS | "
+                    f"{ar_time:.2f} s | {ar_tokens} tokens"
+                )
+
+            elif method == "vanilla":
+                vanilla_tps, vanilla_time, vanilla_tokens = run_vanilla_sd(
+                    main_model, draft_model, model_tokenizer,
+                    context_length, gamma=gamma
+                )
+
+                row.update({
+                    f"Vanilla SD (γ={gamma}) TPS": vanilla_tps,
+                    f"Vanilla SD (γ={gamma}) Tokens": vanilla_tokens,
+                    f"Vanilla SD (γ={gamma}) Time": vanilla_time,
+                })
+
+                print(
+                    f"  Vanilla SD (γ={gamma}): {vanilla_tps:.2f} TPS | "
+                    f"{vanilla_time:.2f} s | {vanilla_tokens} tokens"
+                )
+
+            else:
+                adaptive_tps, adaptive_time, adaptive_tokens = run_adaptive(
+                    main_model, draft_model, model_tokenizer, context_length
+                )
+
+                row.update({
+                    "Adaptive TPS": adaptive_tps,
+                    "Adaptive Tokens": adaptive_tokens,
+                    "Adaptive Time": adaptive_time,
+                })
+                print(
+                    f"  Adaptive TPS:   {adaptive_tps:.2f} TPS | "
+                    f"{adaptive_time:.2f} s | {adaptive_tokens} tokens"
+                )
+
             time.sleep(5)
 
-        adaptive_tps, adaptive_time, adaptive_tokens = run_adaptive(
-            main_model, draft_model, model_tokenizer, context_length
-        )
-        print(
-            f"  Adaptive Controller:   {adaptive_tps:.2f} TPS | "
-            f"{adaptive_time:.2f} s | {adaptive_tokens} tokens"
-        )
-        time.sleep(5)
-
-        results_overall.append({
-            "context_length": context_length,
-            "AR TPS": ar_tps,
-            "AR Tokens": ar_tokens,
-            "AR Time": ar_time,
-            **gamma_results,
-            "Adaptive Controller": adaptive_tps,
-            "Adaptive Tokens": adaptive_tokens,
-            "Adaptive Time": adaptive_time,
-        })
+        # results_overall.append({
+        #     "context_length": context_length,
+        #     "AR TPS": ar_tps,
+        #     "AR Tokens": ar_tokens,
+        #     "AR Time": ar_time,
+        #     **gamma_results,
+        #     "Adaptive TPS": adaptive_tps,
+        #     "Adaptive Tokens": adaptive_tokens,
+        #     "Adaptive Time": adaptive_time,
+        # })
 
         # print(f"\n[Condition 2] Runtime-changing GPU load (stress={stress_frac:.0%})")
         #
@@ -551,27 +604,42 @@ if __name__ == '__main__':
         #         })
 
         # Save after every context length in case of crash.
-        overall_df = pd.DataFrame(results_overall)
+        # overall_df = pd.DataFrame(results_overall)
         # loadwise_df = pd.DataFrame(results_loadwise)
-        overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
+        # overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
         # loadwise_df.to_csv(LOADWISE_SAVE_PATH, index=False)
 
-        print(f"\n>> Overall results saved so far to {OVERALL_SAVE_PATH}")
+        row_df = pd.DataFrame([row]).reindex(columns=CSV_COLUMNS)
+
+        # Append to the master CSV; write its header only once.
+        file_has_data = (
+                os.path.exists(OVERALL_SAVE_PATH)
+                and os.path.getsize(OVERALL_SAVE_PATH) > 0
+        )
+
+        row_df.to_csv(
+            OVERALL_SAVE_PATH,
+            mode="a",
+            header=not file_has_data,
+            index=False,
+        )
+
+        print(
+            f">> Saved run {run_id}, generation length {context_length} "
+            f"to {OVERALL_SAVE_PATH}"
+        )
+
+        # print(f"\n>> Overall results saved so far to {OVERALL_SAVE_PATH}")
         # print(f">> Load-wise results saved so far to {LOADWISE_SAVE_PATH}")
 
     # Final save.
-    overall_df = pd.DataFrame(results_overall)
+    # overall_df = pd.DataFrame(results_overall)
     # loadwise_df = pd.DataFrame(results_loadwise)
-    overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
+    # overall_df.to_csv(OVERALL_SAVE_PATH, index=False)
     # loadwise_df.to_csv(LOADWISE_SAVE_PATH, index=False)
 
-    print(f"\n>> Final overall results saved to {OVERALL_SAVE_PATH}")
+    # print(f"\n>> Final overall results saved to {OVERALL_SAVE_PATH}")
     # print(f">> Final load-wise results saved to {LOADWISE_SAVE_PATH}")
-
-    print(f"\n{'='*60}")
-    print("SUMMARY — OVERALL TPS")
-    print(f"{'='*60}")
-    print(overall_df.to_string(index=False))
 
     # print(f"\n{'='*60}")
     # print("SUMMARY — LOAD-WISE TPS")
