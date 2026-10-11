@@ -128,7 +128,9 @@ def calculate_tps(generate_func,
             active_controller = type(controller)(
                 alpha=controller.alpha,
                 eval_every=controller.eval_every,
-                re_explore_every=controller.re_explore_every
+                re_explore_every=controller.re_explore_every,
+                min_improvement=controller.min_improvement,
+                verbose=controller.verbose,
             )
 
             # Initialize using THIS prompt
