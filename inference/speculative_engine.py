@@ -480,11 +480,15 @@ if __name__ == '__main__':
     
     parser.add_argument(
         "--main_model", type=str, default="main",
-        choices=["main", "pythia-1B", "SmolLM-1.7B", "SmolLM2-1.7B"], help="Select main model for verification of draft tokens"
+        choices=["main", "pythia-1B", "SmolLM-1.7B", "SmolLM2-1.7B",
+                 "Qwen3-8B-Base", "llama-3.1-8B", "gemma-3-12B-pt"],
+        help="Select main model for verification of draft tokens"
     )
     parser.add_argument(
         "--draft_model", type=str, default="draft_medium",
-        choices=["draft_small", "draft_medium", "pythia-160M", "SmolLM-135M", "SmolLM2-135M"], help="Select draft model for speculative generation"
+        choices=["draft_small", "draft_medium", "pythia-160M", "SmolLM-135M",
+                 "SmolLM2-135M", "Qwen3-0.6B-Base", "llama-3.2-1B", "gemma-3-1B-pt"],
+        help="Select draft model for speculative generation"
     )
     parser.add_argument(
         "--gamma", type=int, default=5, help="Number of draft tokens to speculate per step"

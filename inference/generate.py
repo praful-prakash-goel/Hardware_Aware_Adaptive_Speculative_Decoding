@@ -275,7 +275,8 @@ if __name__ == '__main__':
     parser.add_argument(
         "--model", type=str, default="main",
         choices=["main", "draft_small", "draft_medium", "pythia-1B", "pythia-160M", "SmolLM-1.7B", "SmolLM-135M",
-                 "SmolLM2-1.7B", "SmolLM2-135M", "Qwen3-8B-Base", "Qwen3-0.6B-Base"],
+                 "SmolLM2-1.7B", "SmolLM2-135M", "Qwen3-8B-Base", "Qwen3-0.6B-Base", "llama-3.1-8B", "llama-3.2-1B",
+                 "gemma-3-12B-pt", "gemma-3-1B-pt"],
         help="Select model to use for generation"
     )
     parser.add_argument(
