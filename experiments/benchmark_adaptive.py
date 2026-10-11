@@ -449,7 +449,7 @@ if __name__ == '__main__':
         fix_pad(draft_model, _)
 
     elif model_name == "Qwen3":
-        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_qwen3.csv")
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_qwen3_refined.csv")
 
         main_model, model_tokenizer = get_model(model_name="Qwen3-8B-Base")
         fix_pad(main_model, model_tokenizer)
