@@ -2,6 +2,8 @@ import time
 from gc import set_debug
 
 import torch
+
+from inference.adaptive_controller_refined import AdaptiveControllerRefined
 from inference.generate import generate
 from inference.adaptive_controller import AdaptiveController
 from .generate import get_model
@@ -505,6 +507,10 @@ if __name__ == '__main__':
     parser.add_argument(
         "--adaptive", action="store_true", help="Use adaptive model"
     )
+    # temp
+    parser.add_argument(
+        "--new", action="store_true", help="Use new controller"
+    )
     args = parser.parse_args()
     
     main_model_name = args.main_model
@@ -514,6 +520,8 @@ if __name__ == '__main__':
     use_cache = not args.no_cache
     return_stats = args.return_stats
     use_adaptive = args.adaptive
+    # temp
+    refined = args.new
 
     # Load both models
     print(">> Loading Main Model...")
@@ -539,12 +547,30 @@ if __name__ == '__main__':
 
         if use_adaptive:
             init_start = time.time()
-            print(f">> [speculative_engine] Using adaptive controller\n")
-            controller = AdaptiveController(
-                alpha=0.2,
-                eval_every=10,
-                re_explore_every=None
-            )
+            # print(f">> [speculative_engine] Using adaptive controller\n")
+            # controller = AdaptiveController(
+            #     alpha=0.2,
+            #     eval_every=10,
+            #     re_explore_every=None
+            # )
+
+            # temp
+            if not refined:
+                print(f">> [speculative_engine] Using old controller\n")
+                controller = AdaptiveController(
+                    alpha=0.2,
+                    eval_every=10,
+                    re_explore_every=None
+                )
+            else:
+                print(f">> [speculative_engine] Using refined controller\n")
+                controller = AdaptiveControllerRefined(
+                    alpha=0.2,
+                    eval_every=10,
+                    re_explore_every=100,
+                    min_improvement=0.05,
+                    verbose=1,
+                )
 
             sd_viable = controller.initialize(
                 main_model=main_model,
