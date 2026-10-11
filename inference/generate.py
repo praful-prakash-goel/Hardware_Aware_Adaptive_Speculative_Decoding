@@ -119,13 +119,55 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
 
         return model, model_tokenizer
-    elif model_name == 'SmolLM2-360M':
+
+    elif model_name == 'Qwen3-8B-Base':
         print(f">> Building {model_name} model...")
-        model = AutoModelForCausalLM.from_pretrained('HuggingFaceTB/SmolLM2-360M').to(device)
-        model_tokenizer = AutoTokenizer.from_pretrained('HuggingFaceTB/SmolLM2-1.7B')
+        model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-8B-Base').to(device)
+        model_tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen3-8B-Base')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
 
         return model, model_tokenizer
+
+    elif model_name == 'Qwen3-0.6B-Base':
+        print(f">> Building {model_name} model...")
+        model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-0.6B-Base').to(device)
+        model_tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen3-0.6B-Base')
+        model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        return model, model_tokenizer
+
+    elif model_name == 'llama-3.1-8B':
+        print(f">> Building {model_name} model...")
+        model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-3.1-8B').to(device)
+        model_tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-3.1-8B')
+        model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        return model, model_tokenizer
+
+    elif model_name == 'llama-3.2-1B':
+        print(f">> Building {model_name} model...")
+        model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-3.2-1B').to(device)
+        model_tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-3.2-1B')
+        model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        return model, model_tokenizer
+
+    elif model_name == 'gemma-3-12B-pt':
+        print(f">> Building {model_name} model...")
+        model = AutoModelForCausalLM.from_pretrained('google/gemma-3-12b-pt').to(device)
+        model_tokenizer = AutoTokenizer.from_pretrained('google/gemma-3-12b-pt')
+        model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        return model, model_tokenizer
+
+    elif model_name == 'gemma-3-1B-pt':
+        print(f">> Building {model_name} model...")
+        model = AutoModelForCausalLM.from_pretrained('google/gemma-3-1b-pt').to(device)
+        model_tokenizer = AutoTokenizer.from_pretrained('google/gemma-3-1b-pt')
+        model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        return model, model_tokenizer
+
     else:
         raise ValueError(f">> Unknown model name: {model_name}.")
 

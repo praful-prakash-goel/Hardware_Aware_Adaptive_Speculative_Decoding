@@ -407,7 +407,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="pythia",
-                        choices=["pythia", "SmolLM", "SmolLM2"])
+                        choices=["pythia", "SmolLM", "SmolLM2", "Qwen3", "llama-3", "gemma-3"])
     # parser.add_argument("--stress_fraction", type=float, default=0.3,
     #                     help="Fraction of GPU memory to consume in stress test (0.0-0.8)")
     args = parser.parse_args()
@@ -437,6 +437,30 @@ if __name__ == '__main__':
         main_model, model_tokenizer = get_model(model_name="SmolLM2-1.7B")
         fix_pad(main_model, model_tokenizer)
         draft_model, _ = get_model(model_name="SmolLM2-135M")
+        fix_pad(draft_model, _)
+
+    elif model_name == "Qwen3":
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_qwen3.csv")
+
+        main_model, model_tokenizer = get_model(model_name="Qwen3-8B-Base")
+        fix_pad(main_model, model_tokenizer)
+        draft_model, _ = get_model(model_name="Qwen3-0.6B-Base")
+        fix_pad(draft_model, _)
+
+    elif model_name == "llama-3":
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_llama3.csv")
+
+        main_model, model_tokenizer = get_model(model_name="llama-3.1-8B")
+        fix_pad(main_model, model_tokenizer)
+        draft_model, _ = get_model(model_name="llama-3.2-1B")
+        fix_pad(draft_model, _)
+
+    elif model_name == "gemma-3":
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_gemma3.csv")
+
+        main_model, model_tokenizer = get_model(model_name="gemma-3-12B-pt")
+        fix_pad(main_model, model_tokenizer)
+        draft_model, _ = get_model(model_name="gemma-3-1B-pt")
         fix_pad(draft_model, _)
 
     main_model.eval()
