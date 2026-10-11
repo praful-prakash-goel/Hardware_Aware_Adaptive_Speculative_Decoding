@@ -275,7 +275,8 @@ if __name__ == '__main__':
     parser.add_argument(
         "--model", type=str, default="main",
         choices=["main", "draft_small", "draft_medium", "pythia-1B", "pythia-160M", "SmolLM-1.7B", "SmolLM-135M",
-                 "SmolLM2-1.7B", "SmolLM2-135M"], help="Select model to use for generation"
+                 "SmolLM2-1.7B", "SmolLM2-135M", "Qwen3-8B-Base", "Qwen3-0.6B-Base"],
+        help="Select model to use for generation"
     )
     parser.add_argument(
         "--max_new_tokens", type=int, default=512, help="Maximum number of tokens to generate"
