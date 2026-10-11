@@ -1,3 +1,4 @@
+import statistics
 import time
 from bdb import effective
 
@@ -7,16 +8,19 @@ class AdaptiveController:
     def __init__(self,
                  alpha=0.2,
                  eval_every=10,
-                 re_explore_every=None):
+                 re_explore_every=None,
+                 verbose=1):
         """
         Args:
             alpha: EMA smoothing factor
             eval_every: evaluate and possibly switch every K steps
             re_explore_every: re-explore configurations every N steps
+            verbose: controls the amount of info printed
         """
         self.alpha = alpha
         self.eval_every = eval_every
         self.re_explore_every = re_explore_every
+        self.verbose = verbose
 
         # Set during initialization
         self.exploration_order = [] # List of (gamma, cache) combination to try
@@ -59,13 +63,15 @@ class AdaptiveController:
         self.baseline_tps = main_tps
         self.draft_main_ratio = draft_tps / main_tps if main_tps > 0 else 0.0
 
-        print(f"[Controller] main={main_tps:.1f} TPS "
-              f"draft={draft_tps:.1f} TPS ratio={self.draft_main_ratio:.2f}x")
+        if self.verbose == 1:
+            print(f"[Controller] main={main_tps:.1f} TPS "
+                  f"draft={draft_tps:.1f} TPS ratio={self.draft_main_ratio:.2f}x")
 
         # Prune based on ratio
         if self.draft_main_ratio < 1.0:
             # If draft is slower than main -> Fallback to AR Baseline
-            print(f"[Controller] ratio < 1.0 -> falling back to AR Baseline")
+            if self.verbose == 1:
+                print(f"[Controller] ratio < 1.0 -> falling back to AR Baseline")
             self.fallen_back = True
             return False
         elif self.draft_main_ratio < 2.0:
@@ -139,8 +145,9 @@ class AdaptiveController:
                         break
                 self.current_gamma, self.current_cache = next_cfg
                 self.current_ema = 0.0
-                print(f"[Controller] exploring γ={next_cfg[0]} "
-                      f"cache={next_cfg[1]}")
+                if self.verbose == 1:
+                    print(f"[Controller] exploring γ={next_cfg[0]} "
+                          f"cache={next_cfg[1]}")
                 return
 
         # All measured -> exploit best
@@ -150,16 +157,18 @@ class AdaptiveController:
         best = max(self.config_ema, key=lambda k: self.config_ema[k])
         if (best[0] != self.current_gamma or
                 best[1] != self.current_cache):
-            print(f"[Controller] switching to best config "
-                  f"γ={best[0]} cache={best[1]} "
-                  f"({self.config_ema[best]:.1f} TPS)")
+            if self.verbose == 1:
+                print(f"[Controller] switching to best config "
+                      f"γ={best[0]} cache={best[1]} "
+                      f"({self.config_ema[best]:.1f} TPS)")
             self.current_gamma, self.current_cache = best
             self.current_ema = self.config_ema[best]
 
     def _reset_exploration(self):
         """Wipe stored EMAs so all configs get re-measured"""
-        print(f"[Controller] step {self.step_count}: re-exploring "
-              f"(sequence length changed)")
+        if self.verbose == 1:
+            print(f"[Controller] step {self.step_count}: re-exploring "
+                  f"(sequence length changed)")
         for key in self.config_ema:
             self.config_ema[key] = None
         self.current_ema = 0.0
@@ -194,10 +203,11 @@ class AdaptiveController:
 
             # Measure twice and average — reduces single-measurement noise
             times = []
+            actual_token_counts = []
             for _ in range(2):
                 if device == 'cuda':
                     torch.cuda.synchronize()
-                start = time.time()
+                start = time.perf_counter()
                 model.generate(
                     input_ids=warmup_out,
                     attention_mask=warmup_attn,
@@ -206,7 +216,15 @@ class AdaptiveController:
                 )
                 if device == 'cuda':
                     torch.cuda.synchronize()
-                times.append(time.time() - start)
+                elapsed = time.perf_counter() - start
+                actual_tokens = output.shape[1] - warmup_out.shape[1]
 
-        # Use median of two measurements
-        return measure_tokens / min(times)
+                if actual_tokens > 0 and elapsed > 0:
+                    times.append(elapsed)
+                    actual_token_counts.append(actual_tokens)
+
+        # Use the median elapsed time, with the actual token count.
+        median_time = statistics.median(times)
+        median_tokens = statistics.median(actual_token_counts)
+
+        return median_tokens / median_time
