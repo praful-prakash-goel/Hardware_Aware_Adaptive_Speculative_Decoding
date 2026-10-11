@@ -208,7 +208,7 @@ class AdaptiveController:
                 if device == 'cuda':
                     torch.cuda.synchronize()
                 start = time.perf_counter()
-                model.generate(
+                output = model.generate(
                     input_ids=warmup_out,
                     attention_mask=warmup_attn,
                     max_new_tokens=measure_tokens,
