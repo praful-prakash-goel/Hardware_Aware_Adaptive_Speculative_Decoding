@@ -113,19 +113,19 @@ def run_ar_baseline(main_model, model_tokenizer, context_length):
 def run_adaptive(main_model, draft_model, model_tokenizer,
                  context_length):
     """Run adaptive controller, return overall TPS (excludes init time)."""
-    # controller = AdaptiveController(
-    #     alpha=0.2,
-    #     eval_every=10,
-    #     re_explore_every=None,
-    #     verbose=1
-    # )
-    controller = AdaptiveControllerRefined(
+    controller = AdaptiveController(
         alpha=0.2,
         eval_every=10,
-        re_explore_every=100,
-        min_improvement=0.05,
-        verbose=1,
+        re_explore_every=None,
+        verbose=1
     )
+    # controller = AdaptiveControllerRefined(
+    #     alpha=0.2,
+    #     eval_every=10,
+    #     re_explore_every=100,
+    #     min_improvement=0.05,
+    #     verbose=1,
+    # )
     generate_func = partial(
         generate_speculative_standard,
         main_model,
@@ -425,7 +425,7 @@ if __name__ == '__main__':
     # stress_frac = args.stress_fraction
 
     if model_name == "pythia":
-        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia.csv")
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia_old.csv")
         # LOADWISE_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_loadwise_pythia.csv")
         main_model, model_tokenizer = get_model(model_name="pythia-1B")
         fix_pad(main_model, model_tokenizer)
