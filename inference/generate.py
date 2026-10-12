@@ -330,5 +330,7 @@ if __name__ == '__main__':
                       )
 
     text = model_tokenizer.decode(output[0].tolist(), skip_special_tokens=True)
-    print(f">> Output: {text}")
+    # print(f">> Output: {text}")
+    # temp
+    print(f">> output ids: {output}")
     print(f">> Time taken: {time.time() - start}")

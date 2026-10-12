@@ -617,8 +617,9 @@ if __name__ == '__main__':
         gen_time = time.time() - gen_start
 
         text = main_tokenizer.decode(output_ids[0].tolist(), skip_special_tokens=True)
-        print(f"\n>> Output: {text}")
-
+        # print(f"\n>> Output: {text}")
+        # temp
+        print(f"\n>> Output ids: {output_ids}")
         if return_stats:
             print(f">> Stats: {stats}")
 
