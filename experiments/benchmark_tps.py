@@ -125,13 +125,21 @@ def calculate_tps(generate_func,
                 )
 
             # Create a fresh controller with the same settings
+            # active_controller = type(controller)(
+            #     alpha=controller.alpha,
+            #     eval_every=controller.eval_every,
+            #     re_explore_every=controller.re_explore_every,
+            #     min_improvement=controller.min_improvement,
+            #     verbose=controller.verbose,
+            # )
+
+            # temp
             active_controller = type(controller)(
                 alpha=controller.alpha,
                 eval_every=controller.eval_every,
                 re_explore_every=controller.re_explore_every,
-                min_improvement=controller.min_improvement,
-                verbose=controller.verbose,
             )
+
 
             # Initialize using THIS prompt
             if include_controller_init:
