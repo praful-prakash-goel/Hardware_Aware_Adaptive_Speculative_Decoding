@@ -157,6 +157,12 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
         model_tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-3.1-8B')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
 
+        # Disable thinking mode and force greedy deterministic generation
+        model.generation_config.do_sample = False
+        model.generation_config.temperature = None
+        model.generation_config.top_p = None
+        model.generation_config.top_k = None
+
         return model, model_tokenizer
 
     elif model_name == 'llama-3.2-1B':
@@ -164,6 +170,12 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
         model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-3.2-1B').to(device)
         model_tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-3.2-1B')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        # Disable thinking mode and force greedy deterministic generation
+        model.generation_config.do_sample = False
+        model.generation_config.temperature = None
+        model.generation_config.top_p = None
+        model.generation_config.top_k = None
 
         return model, model_tokenizer
 
