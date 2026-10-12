@@ -124,20 +124,30 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
     elif model_name == 'Qwen3-8B-Base':
         print(f">> Building {model_name} model...")
         model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-8B-Base',
-                                                     dtype=torch.float32,
                                                      attn_implementation="eager").to(device)
         model_tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen3-8B-Base')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        # Disable thinking mode and force greedy deterministic generation
+        model.generation_config.do_sample = False
+        model.generation_config.temperature = None
+        model.generation_config.top_p = None
+        model.generation_config.top_k = None
 
         return model, model_tokenizer
 
     elif model_name == 'Qwen3-0.6B-Base':
         print(f">> Building {model_name} model...")
         model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-0.6B-Base',
-                                                     dtype=torch.float32,
                                                      attn_implementation="eager").to(device)
         model_tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen3-0.6B-Base')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
+
+        # Disable thinking mode and force greedy deterministic generation
+        model.generation_config.do_sample = False
+        model.generation_config.temperature = None
+        model.generation_config.top_p = None
+        model.generation_config.top_k = None
 
         return model, model_tokenizer
 
@@ -208,7 +218,7 @@ def generate(model,
              tokenizer=None,
              max_new_tokens=512,
              use_cache=True,
-             temperature: float = 0.0,
+             temperature: float = None,
              do_sample: bool = False,
              top_p: Optional[float] = None,
              repetition_penalty: Optional[float] = None,
