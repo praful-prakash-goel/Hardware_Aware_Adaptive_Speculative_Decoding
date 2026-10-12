@@ -123,7 +123,9 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
 
     elif model_name == 'Qwen3-8B-Base':
         print(f">> Building {model_name} model...")
-        model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-8B-Base', attn_implementation="eager").to(device)
+        model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-8B-Base',
+                                                     dtype=torch.float32,
+                                                     attn_implementation="eager").to(device)
         model_tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen3-8B-Base')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
 
@@ -131,7 +133,9 @@ def get_model(model_name, checkpoint_dir=BASE_DIR, device=DEVICE):
 
     elif model_name == 'Qwen3-0.6B-Base':
         print(f">> Building {model_name} model...")
-        model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-0.6B-Base', attn_implementation="eager").to(device)
+        model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-0.6B-Base',
+                                                     dtype=torch.float32,
+                                                     attn_implementation="eager").to(device)
         model_tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen3-0.6B-Base')
         model_tokenizer.pad_token_id = model_tokenizer.eos_token_id
 
@@ -317,6 +321,7 @@ if __name__ == '__main__':
     print("CUDA:", torch.version.cuda)
     print("Attention backend:", model.config._attn_implementation)
     print("Model dtype:", next(model.parameters()).dtype)
+    print(model.generation_config)
 
     prompt = input("Please enter the prompt: ")
     inputs = model_tokenizer(prompt, return_tensors="pt")
