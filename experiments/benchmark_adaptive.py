@@ -425,7 +425,7 @@ if __name__ == '__main__':
     # stress_frac = args.stress_fraction
 
     if model_name == "pythia":
-        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia_init_once.csv")
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia_50.csv")
         # LOADWISE_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_loadwise_pythia.csv")
         main_model, model_tokenizer = get_model(model_name="pythia-1B")
         fix_pad(main_model, model_tokenizer)
