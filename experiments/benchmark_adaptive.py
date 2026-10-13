@@ -122,7 +122,7 @@ def run_adaptive(main_model, draft_model, model_tokenizer,
     controller = AdaptiveControllerRefined(
         alpha=0.2,
         eval_every=10,
-        re_explore_every=100,
+        re_explore_every=50,
         min_improvement=0.05,
         verbose=1,
     )
