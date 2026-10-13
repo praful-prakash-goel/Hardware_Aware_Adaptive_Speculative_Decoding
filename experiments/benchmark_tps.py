@@ -94,6 +94,80 @@ def calculate_tps(generate_func,
         if device == "cuda":
             torch.cuda.synchronize()
 
+    # temp
+    active_controller = None
+    sd_viable = True
+    init_time = 0.0
+
+    inputs = model_tokenizer(prompts[0], return_tensors="pt")
+    input_ids = inputs.input_ids.to(device)
+    attention_mask = inputs.attention_mask.to(device)
+
+    if controller is not None:
+
+        if controller_main_model is None:
+            raise ValueError(
+                "controller_main_model must be provided "
+                "when controller is used."
+            )
+
+        if controller_draft_model is None:
+            raise ValueError(
+                "controller_draft_model must be provided "
+                "when controller is used."
+            )
+
+        # Create a fresh controller with the same settings
+        active_controller = type(controller)(
+            alpha=controller.alpha,
+            eval_every=controller.eval_every,
+            re_explore_every=controller.re_explore_every,
+            min_improvement=controller.min_improvement,
+            verbose=controller.verbose,
+        )
+
+        # temp
+        # active_controller = type(controller)(
+        #     alpha=controller.alpha,
+        #     eval_every=controller.eval_every,
+        #     re_explore_every=controller.re_explore_every,
+        # )
+
+        # Initialize using THIS prompt
+        if include_controller_init:
+            if device == "cuda":
+                torch.cuda.synchronize()
+
+            init_start = time.time()
+
+            with torch.no_grad():
+                sd_viable = active_controller.initialize(
+                    main_model=controller_main_model,
+                    draft_model=controller_draft_model,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    device=device,
+                    use_cache=use_cache
+                )
+
+            if device == "cuda":
+                torch.cuda.synchronize()
+
+            init_time = time.time() - init_start
+
+        else:
+            # Initialization happens outside measured generation time
+            with torch.no_grad():
+                sd_viable = active_controller.initialize(
+                    main_model=controller_main_model,
+                    draft_model=controller_draft_model,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    device=device,
+                    use_cache=use_cache
+                )
+    # temp end
+
     # Actual Test
     if verbose and method_name:
         print(f"\n>> Running benchmark for {method_name}...")
@@ -106,76 +180,77 @@ def calculate_tps(generate_func,
         if reset_callback is not None:
             reset_callback()
 
-        active_controller = None
-        sd_viable = True
-        init_time = 0.0
+        # temp disabled
+        # active_controller = None
+        # sd_viable = True
+        # init_time = 0.0
 
-        if controller is not None:
-
-            if controller_main_model is None:
-                raise ValueError(
-                    "controller_main_model must be provided "
-                    "when controller is used."
-                )
-
-            if controller_draft_model is None:
-                raise ValueError(
-                    "controller_draft_model must be provided "
-                    "when controller is used."
-                )
-
-            # Create a fresh controller with the same settings
-            # active_controller = type(controller)(
-            #     alpha=controller.alpha,
-            #     eval_every=controller.eval_every,
-            #     re_explore_every=controller.re_explore_every,
-            #     min_improvement=controller.min_improvement,
-            #     verbose=controller.verbose,
-            # )
-
-            # temp
-            active_controller = type(controller)(
-                alpha=controller.alpha,
-                eval_every=controller.eval_every,
-                re_explore_every=controller.re_explore_every,
-            )
-
-
-            # Initialize using THIS prompt
-            if include_controller_init:
-                if device == "cuda":
-                    torch.cuda.synchronize()
-
-                init_start = time.time()
-
-                with torch.no_grad():
-                    sd_viable = active_controller.initialize(
-                        main_model=controller_main_model,
-                        draft_model=controller_draft_model,
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        device=device,
-                        use_cache=use_cache
-                    )
-
-                if device == "cuda":
-                    torch.cuda.synchronize()
-
-                init_time = time.time() - init_start
-
-            else:
-                # Initialization happens outside measured generation time
-                with torch.no_grad():
-                    sd_viable = active_controller.initialize(
-                        main_model=controller_main_model,
-                        draft_model=controller_draft_model,
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        device=device,
-                        use_cache=use_cache
-                    )
-
-        # Start timer
+        # if controller is not None:
+        #
+        #     if controller_main_model is None:
+        #         raise ValueError(
+        #             "controller_main_model must be provided "
+        #             "when controller is used."
+        #         )
+        #
+        #     if controller_draft_model is None:
+        #         raise ValueError(
+        #             "controller_draft_model must be provided "
+        #             "when controller is used."
+        #         )
+        #
+        #     # Create a fresh controller with the same settings
+        #     active_controller = type(controller)(
+        #         alpha=controller.alpha,
+        #         eval_every=controller.eval_every,
+        #         re_explore_every=controller.re_explore_every,
+        #         min_improvement=controller.min_improvement,
+        #         verbose=controller.verbose,
+        #     )
+        #
+        #     # temp
+        #     # active_controller = type(controller)(
+        #     #     alpha=controller.alpha,
+        #     #     eval_every=controller.eval_every,
+        #     #     re_explore_every=controller.re_explore_every,
+        #     # )
+        #
+        #
+        #     # Initialize using THIS prompt
+        #     if include_controller_init:
+        #         if device == "cuda":
+        #             torch.cuda.synchronize()
+        #
+        #         init_start = time.time()
+        #
+        #         with torch.no_grad():
+        #             sd_viable = active_controller.initialize(
+        #                 main_model=controller_main_model,
+        #                 draft_model=controller_draft_model,
+        #                 input_ids=input_ids,
+        #                 attention_mask=attention_mask,
+        #                 device=device,
+        #                 use_cache=use_cache
+        #             )
+        #
+        #         if device == "cuda":
+        #             torch.cuda.synchronize()
+        #
+        #         init_time = time.time() - init_start
+        #
+        #     else:
+        #         # Initialization happens outside measured generation time
+        #         with torch.no_grad():
+        #             sd_viable = active_controller.initialize(
+        #                 main_model=controller_main_model,
+        #                 draft_model=controller_draft_model,
+        #                 input_ids=input_ids,
+        #                 attention_mask=attention_mask,
+        #                 device=device,
+        #                 use_cache=use_cache
+        #             )
+        #
+        # # Start timer
         if device == "cuda": torch.cuda.synchronize()
         start_time = time.time()
 

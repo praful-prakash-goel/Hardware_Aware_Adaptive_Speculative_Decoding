@@ -113,19 +113,19 @@ def run_ar_baseline(main_model, model_tokenizer, context_length):
 def run_adaptive(main_model, draft_model, model_tokenizer,
                  context_length):
     """Run adaptive controller, return overall TPS (excludes init time)."""
-    controller = AdaptiveController(
-        alpha=0.2,
-        eval_every=10,
-        re_explore_every=None,
-        verbose=1
-    )
-    # controller = AdaptiveControllerRefined(
+    # controller = AdaptiveController(
     #     alpha=0.2,
     #     eval_every=10,
-    #     re_explore_every=100,
-    #     min_improvement=0.05,
-    #     verbose=1,
+    #     re_explore_every=None,
+    #     verbose=1
     # )
+    controller = AdaptiveControllerRefined(
+        alpha=0.2,
+        eval_every=10,
+        re_explore_every=100,
+        min_improvement=0.05,
+        verbose=1,
+    )
     generate_func = partial(
         generate_speculative_standard,
         main_model,
