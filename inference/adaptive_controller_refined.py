@@ -107,11 +107,11 @@ class AdaptiveControllerRefined:
 
         main_tps = self._quick_tps(
             main_model, input_ids, attention_mask, device,
-            warmup_tokens=100, measure_tokens=100, use_cache=use_cache,
+            warmup_tokens=20, measure_tokens=50, use_cache=use_cache,
         )
         draft_tps = self._quick_tps(
             draft_model, input_ids, attention_mask, device,
-            warmup_tokens=100, measure_tokens=100, use_cache=use_cache,
+            warmup_tokens=20, measure_tokens=50, use_cache=use_cache,
         )
 
         self.baseline_tps = main_tps
@@ -304,8 +304,8 @@ class AdaptiveControllerRefined:
         input_ids,
         attention_mask,
         device,
-        warmup_tokens=100,
-        measure_tokens=100,
+        warmup_tokens=20,
+        measure_tokens=50,
         use_cache=True,
     ):
         """Estimate standalone generation TPS using median elapsed time."""
