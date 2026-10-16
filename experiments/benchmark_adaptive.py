@@ -122,7 +122,7 @@ def run_adaptive(main_model, draft_model, model_tokenizer,
     controller = AdaptiveControllerRefined(
         alpha=0.2,
         eval_every=10,
-        re_explore_every=50,
+        re_explore_every=100,
         min_improvement=0.05,
         verbose=1,
     )
@@ -425,7 +425,7 @@ if __name__ == '__main__':
     # stress_frac = args.stress_fraction
 
     if model_name == "pythia":
-        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia_50.csv")
+        OVERALL_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia.csv")
         # LOADWISE_SAVE_PATH = os.path.join(RESULTS_DIR, "adaptive_loadwise_pythia.csv")
         main_model, model_tokenizer = get_model(model_name="pythia-1B")
         fix_pad(main_model, model_tokenizer)
