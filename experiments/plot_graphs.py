@@ -1,19 +1,26 @@
 import matplotlib
 import pandas as pd
-import seaborn as sb
+import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sys
-from .benchmark_tps import RESULTS_DIR
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(BASE_DIR, 'results/')
+
 PYTHIA_BENCHMARKS_PATH = os.path.join(RESULTS_DIR, "benchmarks_pythia.csv")
 SMOL_BENCHMARKS_PATH = os.path.join(RESULTS_DIR, "benchmarks_smol.csv")
 SMOL2_BENCHMARKS_PATH = os.path.join(RESULTS_DIR, "benchmarks_smol2.csv")
+
 PYTHIA_STRESS_PATH = os.path.join(RESULTS_DIR, "stress_test_pythia.csv")
 SMOL_STRESS_PATH = os.path.join(RESULTS_DIR, "stress_test_smol.csv")
 SMOL2_STRESS_PATH = os.path.join(RESULTS_DIR, "stress_test_smol2.csv")
+
 SMOL_PROFILE_PATH = os.path.join(RESULTS_DIR, "smollm_profile.csv")
+
+PYTHIA_ADAPTIVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_pythia.csv")
+SMOL_ADAPTIVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_smol.csv")
+SMOL2_ADAPTIVE_PATH = os.path.join(RESULTS_DIR, "adaptive_overall_smol2.csv")
 
 PLOT_DIR = os.path.join(BASE_DIR, "plots")
 os.makedirs(PLOT_DIR, exist_ok=True)
@@ -78,7 +85,28 @@ def plot_graphs():
     else:
         print(f">> No csv file found at {SMOL_PROFILE_PATH}")
         sys.exit(1)
-    
+
+    if os.path.exists(PYTHIA_ADAPTIVE_PATH):
+        df_pythia_adaptive = pd.read_csv(PYTHIA_ADAPTIVE_PATH)
+
+    else:
+        print(f">> No csv file found at {PYTHIA_ADAPTIVE_PATH}")
+        sys.exit(1)
+
+    if os.path.exists(SMOL_ADAPTIVE_PATH):
+        df_smol_adaptive = pd.read_csv(SMOL_ADAPTIVE_PATH)
+
+    else:
+        print(f">> No csv file found at {SMOL_ADAPTIVE_PATH}")
+        sys.exit(1)
+
+    if os.path.exists(SMOL2_ADAPTIVE_PATH):
+        df_smol2_adaptive = pd.read_csv(SMOL2_ADAPTIVE_PATH)
+
+    else:
+        print(f">> No csv file found at {SMOL2_ADAPTIVE_PATH}")
+        sys.exit(1)
+
     # Get unique gamma values used in experiments
     gammas = df_smol['gamma'].dropna().unique()
 
@@ -105,6 +133,23 @@ def plot_graphs():
 
     # Take only the cached rows from profile data of smollm
     df_smol_profile_cache = df_smol_profile[df_smol_profile['use_cache'] == True]
+
+    # Adaptive benchmark dataframes
+    tps_cols = [col for col in df_pythia_adaptive if col.endswith("TPS")]
+    target_cols = ['run_id', 'generation_length'] + tps_cols
+
+    df_pythia_adaptive = df_pythia_adaptive[target_cols]
+    df_smol_adaptive = df_smol_adaptive[target_cols]
+    df_smol2_adaptive = df_smol2_adaptive[target_cols]
+
+    grouped_pythia = df_pythia_adaptive.groupby('generation_length')[tps_cols].agg('mean')
+    pythia_stats_df = grouped_pythia.reset_index()
+
+    grouped_smol = df_smol_adaptive.groupby('generation_length')[tps_cols].agg('mean')
+    smol_stats_df = grouped_smol.reset_index()
+
+    grouped_smol2 = df_smol2_adaptive.groupby('generation_length')[tps_cols].agg('mean')
+    smol2_stats_df = grouped_smol2.reset_index()
 
     # Graph 1: Baseline Tokens Per Second (TPS)
     # Assign draft colors
@@ -288,7 +333,7 @@ def plot_graphs():
     plt.tight_layout()
     fig.savefig(os.path.join(PLOT_DIR, "stress_test.pdf"), bbox_inches='tight')
 
-    # Graph 6: Profiler breakdown of Smollm speculative with cache
+    # Graph 5: Profiler breakdown of Smollm speculative with cache
     draft_speculation_pct = df_smol_profile_cache['draft_speculation_pct'].values
     target_verification_pct = df_smol_profile_cache['target_verification_pct'].values
 
@@ -368,6 +413,106 @@ def plot_graphs():
 
     plt.tight_layout()
     fig.savefig(os.path.join(PLOT_DIR, "smollm_profile.pdf"), bbox_inches='tight')
+
+    # Graph 6: Generation Length vs Avg TPS for adaptive
+    gamma_cols = [
+        "Vanilla SD (γ=2) TPS",
+        "Vanilla SD (γ=3) TPS",
+        "Vanilla SD (γ=5) TPS",
+        "Vanilla SD (γ=7) TPS",
+        "Vanilla SD (γ=10) TPS",
+    ]
+
+    model_stats = {
+        "Pythia": pythia_stats_df,
+        "Smol": smol_stats_df,
+        "Smol2": smol2_stats_df,
+    }
+
+    best_gamma = {}
+    for model_name, df in model_stats.items():
+        mean_tps = df[gamma_cols].mean()
+        best_col = mean_tps.idxmax()
+        best_gamma_val = best_col.split("γ=")[1].split(")")[0]
+
+        best_gamma[model_name] = (best_col, best_gamma_val)
+
+    generation_lengths = pythia_stats_df['generation_length'].unique()
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 3.8), sharey=True)
+
+    for ax, (model_name, df) in zip(axes, model_stats.items()):
+        best_col, gamma = best_gamma[model_name]
+
+        ax.plot(generation_lengths, df['AR TPS'], color='dimgray',
+                     marker='o', linewidth=2, markersize=7, label='AR Baseline')
+        ax.plot(generation_lengths, df[best_col], color='tab:orange',
+                     marker='s', linewidth=2, markersize=7, label=f'Best static SD')
+        ax.plot(generation_lengths, df['Adaptive TPS'], color='tab:blue',
+                     marker='D', linewidth=2, markersize=7, label=f'Adaptive SD')
+
+        ax.set_title(f"{model_name} (Best γ={gamma})")
+        ax.set_xlabel("Generation Length (tokens)")
+        ax.set_xticks(generation_lengths)
+        ax.grid(True, alpha=0.25)
+
+    axes[0].set_ylabel("Average throughput (tokens/sec)")
+
+    # Build a shared legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles, labels,
+        loc='upper center',
+        bbox_to_anchor=(0.5, 1.05),
+        ncol=3,
+        frameon=False,
+    )
+
+    plt.tight_layout()
+    fig.savefig(os.path.join(PLOT_DIR, "adaptive_throughput.pdf"), bbox_inches='tight')
+
+    # Graph 7: % improvement of Adaptive SD over AR and static SD
+    fig, ax = plt.subplots(figsize=(6.5, 3.8))
+
+    model_names = list(model_stats.keys())
+    x = np.arange(len(model_names))
+    bar_width = 0.35
+
+    y_min = 1e9
+    y_max = 0
+    for idx, model_name in enumerate(model_names):
+        df = model_stats[model_name]
+        adaptive_tps = df['Adaptive TPS'].mean()
+        ar_tps = df['AR TPS'].mean()
+        sd_tps = df[best_gamma[model_name][0]].mean()
+
+        improvement_ar = ((adaptive_tps - ar_tps) / ar_tps) * 100
+        improvement_sd = ((adaptive_tps - sd_tps) / sd_tps) * 100
+
+        y_min = min(y_min, improvement_ar + improvement_sd)
+        y_max = max(y_max, improvement_ar + improvement_sd)
+
+        label_ar = 'vs AR' if idx == 0 else ''
+        label_sd = 'vs SD' if idx == 0 else ''
+
+        ax.bar(x[idx] - bar_width/2, improvement_ar, bar_width, color='tab:blue', label=label_ar)
+        ax.bar(x[idx] + bar_width/2, improvement_sd, bar_width, color='tab:orange', label=label_sd)
+
+    # Zero reference line
+    ax.set_ylim(min(0, y_min - 10), y_max + 10)
+    ax.set_yticks(np.arange(-20, 101, 20))
+    ax.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels(model_names)
+
+    ax.set_ylabel("% Improvement")
+    ax.legend()
+    ax.set_title("Adaptive SD: throughput improvement")
+    ax.grid(axis="y", alpha=0.25)
+    ax.set_axisbelow(True)
+
+    plt.tight_layout()
+    fig.savefig(os.path.join(PLOT_DIR, "adaptive_improvement.pdf"), bbox_inches='tight')
 
     print(f">> Plots saved at {PLOT_DIR}")
     
