@@ -495,8 +495,15 @@ def plot_graphs():
         label_ar = 'vs AR' if idx == 0 else ''
         label_sd = 'vs SD' if idx == 0 else ''
 
-        ax.bar(x[idx] - bar_width/2, improvement_ar, bar_width, color='tab:blue', label=label_ar)
-        ax.bar(x[idx] + bar_width/2, improvement_sd, bar_width, color='tab:orange', label=label_sd)
+        bars_ar = ax.bar(x[idx] - bar_width/2, improvement_ar, bar_width, color='tab:blue', label=label_ar)
+        bars_sd = ax.bar(x[idx] + bar_width/2, improvement_sd, bar_width, color='tab:orange', label=label_sd)
+
+        ax.bar_label(
+            bars_ar, fmt="%.1f%%", padding=3, fontsize=9
+        )
+        ax.bar_label(
+            bars_sd, fmt="%.1f%%", padding=3, fontsize=9
+        )
 
     # Zero reference line
     ax.set_ylim(min(0, y_min - 10), y_max + 10)
